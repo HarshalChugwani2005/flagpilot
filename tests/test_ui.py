@@ -24,7 +24,7 @@ TIMEOUT = 30
 
 
 def page(name: str) -> AppTest:
-    return AppTest.from_file(str(UI / "pages" / name), default_timeout=TIMEOUT)
+    return AppTest.from_file(str(UI / "views" / name), default_timeout=TIMEOUT)
 
 
 def events(settings: Settings) -> list[str]:

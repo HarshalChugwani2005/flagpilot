@@ -30,7 +30,7 @@ Flagsmith "Toggle Wars" hackathon · Track 2: AI Agents + Feature Flags
 
 ```mermaid
 flowchart LR
-    U([You]) --> UI[Streamlit UI<br/>ui/app.py + ui/pages/]
+    U([You]) --> UI[Streamlit UI<br/>ui/app.py + ui/views/]
     UI --> P[Planner<br/>agent/planner.py]
     P --> LLM[NVIDIA NIM · Nemotron 3.5 Super<br/>agent/llm.py]
     P --> G[Guardrails<br/>agent/guardrails.py]

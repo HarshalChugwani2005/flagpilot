@@ -57,7 +57,7 @@ def render_card(experiment: ExperimentSummary, now: datetime) -> str | None:
             disabled=experiment.live_since is None,
         ):
             st.session_state.selected_flag = experiment.flag_name
-            st.switch_page("pages/results.py")
+            st.switch_page("views/results.py")
     return error
 
 
@@ -73,7 +73,7 @@ def main() -> None:
         st.stop()
     if not experiments:
         st.info("No experiments yet. Plan your first one on the New experiment page.")
-        st.page_link("pages/new_experiment.py", label="New experiment", icon="✨")
+        st.page_link("views/new_experiment.py", label="New experiment", icon="✨")
         return
     now = utc_now()
     errors = set()

@@ -18,10 +18,10 @@ from ui.data import flagsmith_health  # noqa: E402
 log = logging.getLogger("flagpilot.ui")
 
 PAGES = [
-    st.Page("pages/new_experiment.py", title="New experiment", icon="✨", default=True),
-    st.Page("pages/experiments.py", title="Experiments", icon="🧪"),
-    st.Page("pages/results.py", title="Results", icon="📊"),
-    st.Page("pages/audit_log.py", title="Audit log", icon="📜"),
+    st.Page("views/new_experiment.py", title="New experiment", icon="✨", default=True),
+    st.Page("views/experiments.py", title="Experiments", icon="🧪"),
+    st.Page("views/results.py", title="Results", icon="📊"),
+    st.Page("views/audit_log.py", title="Audit log", icon="📜"),
 ]
 
 
