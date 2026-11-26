@@ -179,11 +179,63 @@ class ExecutionResult(BaseModel):
     outcomes: list[CallOutcome]
 
 
+class VariantCounts(BaseModel):
+    """Raw counts for one variant, as measured in Flagsmith."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    visitors: int = Field(ge=0)
+    conversions: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def conversions_within_visitors(self) -> Self:
+        """Reject more conversions than visitors."""
+        if self.conversions > self.visitors:
+            raise ValueError("conversions cannot exceed visitors")
+        return self
+
+
+class VariantStats(BaseModel):
+    """Conversion rate and its 95% Wilson confidence interval for one variant."""
+
+    name: str
+    visitors: int
+    conversions: int
+    rate: float
+    ci_low: float
+    ci_high: float
+
+
+Verdict = Literal["winner", "not_significant", "not_enough_data"]
+
+
 class ExperimentResult(BaseModel):
-    """Per-variant counts and the statistics computed in code (never by the LLM)."""
+    """Statistics computed in code with scipy (never by the LLM)."""
+
+    flag_name: str
+    metric_name: str
+    control: str
+    variants: list[VariantStats]
+    best_treatment: str
+    p_value: float
+    alpha: float = Field(description="Significance level after Bonferroni correction.")
+    relative_lift: float | None = Field(description="Best treatment vs control; None if 0%.")
+    min_sample_size: int
+    verdict: Verdict
+    winner: str | None
+
+    @property
+    def visitors(self) -> int:
+        """Visitors across all variants."""
+        return sum(variant.visitors for variant in self.variants)
+
+    @property
+    def conversions(self) -> int:
+        """Conversions across all variants."""
+        return sum(variant.conversions for variant in self.variants)
 
 
-AuditEvent = Literal["approved", "rejected", "refused", "call", "result", "error"]
+AuditEvent = Literal["planned", "approved", "rejected", "refused", "call", "result", "error"]
 
 
 class AuditEntry(BaseModel):

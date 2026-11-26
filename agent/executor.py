@@ -1,5 +1,6 @@
 """The single gateway for Flagsmith writes. Every write needs an approval and is audited."""
 
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from agent.audit import AuditLog
@@ -12,6 +13,7 @@ from agent.models import (
     ExecutionResult,
     ExperimentPlan,
     ExperimentResult,
+    PlannedCall,
     plan_hash,
 )
 
@@ -36,6 +38,21 @@ def _refuse(audit: AuditLog, plan: ExperimentPlan, current_hash: str, problems: 
     raise ExecutionError("FlagPilot did not run this plan: " + " ".join(problems))
 
 
+def _run_call(
+    call: PlannedCall, runner: ToolRunner | None, audit: AuditLog, context: dict[str, Any]
+) -> CallOutcome:
+    """Send one call to Flagsmith and log its result or error."""
+    assert runner is not None  # execute_plan refuses real runs without a runner
+    try:
+        result = runner.call_tool(call.tool, call.arguments)
+    except Exception as error:
+        message = error.friendly if isinstance(error, FlagPilotError) else str(error)
+        audit.record("error", tool=call.tool, error=message, **context)
+        raise ExecutionError(f"Flagsmith call {call.tool} failed: {message}") from error
+    audit.record("result", tool=call.tool, result=result, **context)
+    return CallOutcome(tool=call.tool, ok=True, dry_run=False, result=result)
+
+
 def execute_plan(
     plan: ExperimentPlan,
     approval: ApprovalRecord | None,
@@ -45,12 +62,14 @@ def execute_plan(
     project_id: int,
     allow_production: bool = False,
     dry_run: bool = False,
+    on_call: Callable[[PlannedCall, CallOutcome], None] | None = None,
 ) -> ExecutionResult:
     """Apply ``plan`` in Flagsmith, logging every call and result to the audit log.
 
     Guardrails always run. A real run additionally needs an approval whose hash matches
     the plan *now* and which is present in the audit log. ``dry_run`` logs the calls it
-    would make without contacting Flagsmith (and needs no approval).
+    would make without contacting Flagsmith (and needs no approval). ``on_call`` is told
+    about each finished call, so a UI can show progress.
     """
     current_hash = plan_hash(plan)
     calls = build_changes(plan, project_id)
@@ -75,23 +94,30 @@ def execute_plan(
     for call in calls:
         audit.record("call", tool=call.tool, arguments=call.arguments, dry_run=dry_run, **context)
         if dry_run:
-            outcomes.append(CallOutcome(tool=call.tool, ok=True, dry_run=True))
-            continue
-        assert runner is not None  # checked above
-        try:
-            result = runner.call_tool(call.tool, call.arguments)
-        except Exception as error:
-            message = error.friendly if isinstance(error, FlagPilotError) else str(error)
-            audit.record("error", tool=call.tool, error=message, **context)
-            raise ExecutionError(f"Flagsmith call {call.tool} failed: {message}") from error
-        audit.record("result", tool=call.tool, result=result, **context)
-        outcomes.append(CallOutcome(tool=call.tool, ok=True, dry_run=False, result=result))
+            outcome = CallOutcome(tool=call.tool, ok=True, dry_run=True)
+        else:
+            outcome = _run_call(call, runner, audit, context)
+        outcomes.append(outcome)
+        if on_call:
+            on_call(call, outcome)
 
     return ExecutionResult(
         flag_name=plan.flag_name, plan_hash=current_hash, dry_run=dry_run, outcomes=outcomes
     )
 
 
-def roll_out_winner(result: ExperimentResult, approval: ApprovalRecord) -> ExecutionResult:
-    """Send 100% of traffic to the winning variant and append the write to the audit log."""
-    raise NotImplementedError("agent.executor.roll_out_winner is implemented in a later step.")
+def roll_out_winner(result: ExperimentResult, *, approver: str, confirmation: str) -> None:
+    """Second approval: send all traffic to the winner once the flag name is typed back.
+
+    The confirmation rules are enforced here; the Flagsmith write itself needs the
+    MCP client (pending decision on which weights to change), so it is refused.
+    """
+    if result.verdict != "winner" or result.winner is None:
+        raise ExecutionError("There is no significant winner to roll out yet.")
+    if not approver.strip():
+        raise ExecutionError("Enter your name to approve the rollout.")
+    if confirmation.strip() != result.flag_name:
+        raise ExecutionError(f'Type the flag name "{result.flag_name}" exactly to confirm.')
+    raise ExecutionError(
+        "Rolling out a winner is not connected to Flagsmith yet, so nothing was changed."
+    )
