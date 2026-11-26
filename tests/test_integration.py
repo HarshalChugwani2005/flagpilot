@@ -1,7 +1,8 @@
 """REAL end-to-end flow against Flagsmith and NVIDIA NIM (no mocks).
 
-plan (NIM) -> approve -> create an fp_ flag (executor + official Flagsmith MCP server)
--> read it back from Flagsmith -> clean it up (Admin API delete through the executor).
+plan (NIM) -> approve -> create an fp_ flag, its metric and a started Flagsmith experiment
+(executor + official MCP server + Admin API start) -> read it back -> delete the flag.
+The metric is left behind: Flagsmith offers no tool or documented endpoint to delete one.
 
 Skipped when the keys are missing (no .env and no environment variables), e.g. in CI.
 Run locally with ``make test-integration``. Cost per run: 1-2 NIM requests and about
@@ -85,8 +86,20 @@ def test_plan_approve_create_read_back_and_clean_up(
     flag_id: int | None = None
     try:
         # 3. Create it through the executor and the official MCP server.
-        result = execute_plan(plan, approval, runner=client, audit=audit, project_id=project_id)
+        result = execute_plan(
+            plan,
+            approval,
+            runner=client,
+            admin=AdminAPI(live_settings),
+            audit=audit,
+            project_id=project_id,
+            environment_api_key=live_settings.flagsmith_environment_key.get_secret_value(),
+        )
         assert all(outcome.ok for outcome in result.outcomes)
+        by_tool = {outcome.tool: outcome.result for outcome in result.outcomes}
+        assert isinstance(by_tool["create_metric"], dict) and "id" in by_tool["create_metric"]
+        assert isinstance(by_tool["create_experiment"], dict)
+        assert "id" in by_tool["create_experiment"]
 
         # 4. Read it back from Flagsmith.
         flag_id = find_flag_id(client, name)
@@ -112,4 +125,5 @@ def test_plan_approve_create_read_back_and_clean_up(
     assert name not in client.list_flag_names()
     events = [entry.event for entry in audit.entries()]
     assert events[:3] == ["approved", "call", "result"]
+    assert events.count("result") >= 6  # 5 experiment calls + the delete
     assert "error" not in events

@@ -53,7 +53,9 @@ flowchart LR
 | What | How | Where |
 | --- | --- | --- |
 | Read flags, project, organisations | MCP tools `list_project_features`, `get_project`, `list_organizations`, `list_projects_in_organization` | [agent/flagsmith_client.py](agent/flagsmith_client.py) |
-| Create the experiment flag | MCP `create_feature`: multivariate, control as the base value, variants with percentage allocations, created switched off | [agent/changes.py](agent/changes.py), [agent/executor.py](agent/executor.py) |
+| Create the experiment flag | MCP `create_feature`: multivariate, control as base value, variants as options, created switched off | [agent/changes.py](agent/changes.py), [agent/executor.py](agent/executor.py) |
+| Create the metric and experiment | MCP `create_metric` (`occurrence` of the plan's event) and `create_experiment` (rollout %, per-variant weights); option ids read back with `list_feature_multivariate_options` | [agent/changes.py](agent/changes.py), [agent/executor.py](agent/executor.py) |
+| Start the experiment | Admin API `POST /environments/{key}/experiments/{id}/start/` (MCP cannot start experiments) | [agent/admin_api.py](agent/admin_api.py) |
 | Roll out the winner | MCP `list_project_environments`, `list_project_features`, `list_feature_multivariate_options`, `update_environment_feature_state` | [agent/rollout.py](agent/rollout.py), [agent/executor.py](agent/executor.py) |
 | Delete demo flags | Admin API `DELETE /api/v1/projects/{id}/features/{id}/` (the MCP server has no delete tool) | [agent/admin_api.py](agent/admin_api.py), [scripts/reset_demo.py](scripts/reset_demo.py) |
 | Assign visitors + send `purchase` events | Python SDK `get_experiment_flag`, `track_event` | [scripts/traffic_sim.py](scripts/traffic_sim.py) |
@@ -134,15 +136,17 @@ The sidebar's **Time saved** metric shows the same comparison live
 
 ## Known limitations
 
-- **Results don't come from Flagsmith yet.** FlagPilot doesn't create Flagsmith
-  experiments or metrics, and Flagsmith's API spec doesn't define the metric `definition`
-  or the shape of the results response, so the Results page reports "not connected".
-  The rollout code is tested with mocks but not yet against live Flagsmith.
-- The simulator's `purchase` events are sent, but with no running Flagsmith experiment,
-  Flagsmith records no exposures.
+- **The Results page can't read Flagsmith's numbers yet.** FlagPilot creates and starts
+  the Flagsmith experiment and metric, but Flagsmith hasn't documented the shape of the
+  results/exposures responses, so they aren't parsed; see the results in Flagsmith itself.
+- Not yet run against live Flagsmith: the experiment calls and the rollout are tested
+  with mocks and the documented request bodies. Rolling out while the experiment is
+  running may be refused by Flagsmith (the docs say a running experiment locks the flag).
+- Each run leaves its metric in Flagsmith: there is no tool or documented endpoint to
+  delete one.
 - The demo store's button shows each visitor's variant but doesn't send purchase events;
   only the simulator does.
-- Visitors outside the experiment's traffic share see the control value.
+- Visitors outside the experiment's rollout share see the control value.
 - Environments with v2 feature versioning: the rollout refuses and changes nothing.
 - The official MCP server is installed from Flagsmith's GitHub `main` branch, which isn't
   pinned.

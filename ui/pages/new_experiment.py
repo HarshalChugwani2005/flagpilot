@@ -5,6 +5,7 @@ import time
 
 import streamlit as st
 
+from agent.admin_api import AdminAPI
 from agent.approval import approve, record_plan, reject
 from agent.audit import AuditLog
 from agent.changes import OUTSIDE, build_changes, traffic_segments, variant_allocations
@@ -243,8 +244,10 @@ def apply_plan(plan: ExperimentPlan, settings: Settings, audit: AuditLog, *, dry
                 plan,
                 approval,
                 runner=None if dry_run else FlagsmithClient(),
+                admin=None if dry_run else AdminAPI(settings),
                 audit=audit,
                 project_id=settings.flagsmith_project_id,
+                environment_api_key=settings.flagsmith_environment_key.get_secret_value(),
                 allow_production=settings.allow_production,
                 dry_run=dry_run,
                 on_call=lambda call, outcome: status.write(

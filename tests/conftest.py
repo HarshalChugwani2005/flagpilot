@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import httpx2
 import openai
 import pytest
@@ -37,16 +38,31 @@ def make_plan(**changes: Any) -> ExperimentPlan:
 
 
 class FakeRunner:
-    """Records Flagsmith MCP tool calls; optionally fails with ``error``."""
+    """Answers Flagsmith calls like Flagsmith would; optionally fails with ``error``."""
 
     def __init__(self, error: Exception | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.error = error
+        self._options: list[dict[str, Any]] = []
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         self.calls.append((name, arguments))
         if self.error:
             raise self.error
+        if name == "create_feature":
+            self._options = [
+                {"id": 500 + index, "key": option["key"]}
+                for index, option in enumerate(arguments.get("multivariate_options", []))
+            ]
+            return {"id": 99, "name": arguments.get("name")}
+        if name == "list_feature_multivariate_options":
+            return {"results": self._options}
+        if name == "create_metric":
+            return {"id": 31, "name": arguments.get("name")}
+        if name == "create_experiment":
+            return {"id": 41, "name": arguments.get("name"), "status": "created"}
+        if name == "admin_api.start_experiment":
+            return {"id": arguments.get("id"), "status": "running"}
         return {"id": 99, "name": arguments.get("name")}
 
 
@@ -117,3 +133,15 @@ def make_llm(fake_chat: FakeChatClient, tmp_path: Path) -> Callable[..., LLMClie
         return LLMClient(settings, client=fake_chat, sleep=record.append)
 
     return factory
+
+
+@pytest.fixture(autouse=True)
+def no_real_http(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests must never reach Flagsmith or NIM; only integration tests may."""
+    if request.node.get_closest_marker("integration"):
+        return
+
+    def refuse(self: Any, http_request: Any) -> Any:
+        raise AssertionError(f"Unit test tried to reach the network: {http_request.url}")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)

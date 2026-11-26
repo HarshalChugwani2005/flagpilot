@@ -58,8 +58,7 @@ def patched(monkeypatch: pytest.MonkeyPatch, settings: Settings, tmp_path: Path)
         monkeypatch.setattr(module, "load_settings", lambda: settings)
         monkeypatch.setattr(module, "FlagsmithClient", lambda s: flagsmith)
     monkeypatch.setattr(reset_demo, "AdminAPI", lambda s: admin)
-    monkeypatch.setattr(reset_demo, "operator_name", lambda: "asha")
-    monkeypatch.setattr(seed_demo, "operator_name", lambda: "asha")
+    monkeypatch.setattr(seed_demo, "AdminAPI", lambda s: flagsmith)
     return {"flagsmith": flagsmith, "admin": admin, "settings": settings}
 
 
@@ -174,7 +173,13 @@ def test_seed_creates_the_experiment_then_runs_traffic(
 
     seed_demo.main(input_fn=lambda prompt: "fp_pricing_cta")
 
-    assert [name for name, _ in patched["flagsmith"].calls] == ["create_feature"]
+    assert [name for name, _ in patched["flagsmith"].calls] == [
+        "create_feature",
+        "list_feature_multivariate_options",
+        "create_metric",
+        "create_experiment",
+        "admin_api.start_experiment",
+    ]
     assert traffic == [
         [
             "--flag",
@@ -188,7 +193,7 @@ def test_seed_creates_the_experiment_then_runs_traffic(
         ]
     ]
     events = [e.event for e in AuditLog(patched["settings"].audit_log_path).entries()]
-    assert events == ["planned", "approved", "call", "result"]
+    assert events == ["planned", "approved"] + ["call", "result"] * 5
 
 
 def test_seed_refuses_when_the_flag_exists(patched: dict) -> None:
@@ -205,3 +210,24 @@ def test_seed_checks_the_planners_names(patched: dict, monkeypatch: pytest.Monke
     with pytest.raises(SystemExit, match="Run make seed again"):
         seed_demo.main(input_fn=lambda prompt: "fp_pricing_cta")
     assert patched["flagsmith"].calls == []
+
+
+def answers(*replies: str):
+    """input() stand-in that returns ``replies`` in order."""
+    iterator = iter(replies)
+    return lambda prompt: next(iterator)
+
+
+def test_reset_needs_an_approver_name(patched: dict, cache_dir: Path) -> None:
+    reset_demo.main(input_fn=answers("Demo Store", "   "))
+
+    assert patched["admin"].calls == []
+    assert len(list(cache_dir.glob("*.json"))) == 3
+
+
+def test_reset_records_the_named_approver(patched: dict, cache_dir: Path) -> None:
+    reset_demo.main(input_fn=answers("Demo Store", "Asha"))
+
+    backup = next((patched["settings"].audit_log_path.parent / "audit_backups").glob("*.jsonl"))
+    approvals = [json.loads(line) for line in backup.read_text().splitlines()]
+    assert approvals[0]["event"] == "approved" and approvals[0]["approver"] == "Asha"

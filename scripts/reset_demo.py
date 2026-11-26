@@ -24,7 +24,7 @@ from agent.flagsmith_client import FlagsmithClient  # noqa: E402
 from agent.guardrails import FLAG_PREFIX  # noqa: E402
 from agent.llm import cached_replies, clear_cache  # noqa: E402
 from agent.models import DemoFlag, ResetPlan  # noqa: E402
-from scripts.common import confirm, operator_name  # noqa: E402
+from scripts.common import ask_approver, confirm  # noqa: E402
 
 BACKUP_DIR_NAME = "audit_backups"
 
@@ -112,7 +112,11 @@ def main(input_fn: Callable[[str], str] = input) -> None:
         ):
             print("Cancelled. Nothing was changed.")
             return
-        apply_reset(reset, settings, audit, AdminAPI(settings), operator_name())
+        approver = ask_approver(input_fn)
+        if approver is None:
+            print("Cancelled: an approver name is required. Nothing was changed.")
+            return
+        apply_reset(reset, settings, audit, AdminAPI(settings), approver)
     except FlagPilotError as error:
         sys.exit(error.friendly + (f"\nDetails: {error.detail}" if error.detail else ""))
     print("Demo reset complete.")

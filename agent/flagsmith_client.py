@@ -251,10 +251,15 @@ class FlagsmithClient:
             page += 1
 
     def get_variant_counts(self, flag_name: str, metric_event: str) -> dict[str, VariantCounts]:
-        """Visitors and conversions per variant (needs Flagsmith experiments; not wired yet)."""
+        """Visitors and conversions per variant, from Flagsmith's experiment results.
+
+        FlagPilot creates and starts the Flagsmith experiment, but Flagsmith does not
+        document the shape of the results/exposures responses yet, so they are not parsed.
+        """
         raise FlagsmithError(
-            "Reading experiment results from Flagsmith is not connected yet: it needs a "
-            "Flagsmith experiment and metric on the flag."
+            "Flagsmith is running this experiment, but FlagPilot cannot read its results "
+            "yet: Flagsmith has not documented the results response. Open the experiment in "
+            "Flagsmith to see them."
         )
 
 

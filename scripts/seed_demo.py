@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from agent.admin_api import AdminAPI  # noqa: E402
 from agent.approval import approve, record_plan  # noqa: E402
 from agent.audit import AuditLog  # noqa: E402
 from agent.changes import build_changes  # noqa: E402
@@ -23,7 +24,7 @@ from agent.flagsmith_client import FlagsmithClient  # noqa: E402
 from agent.guardrails import validate_plan  # noqa: E402
 from agent.models import ExperimentPlan  # noqa: E402
 from agent.planner import plan_experiment  # noqa: E402
-from scripts.common import confirm, operator_name  # noqa: E402
+from scripts.common import ask_approver, confirm  # noqa: E402
 from scripts.traffic_sim import main as run_traffic  # noqa: E402
 
 SEED_FLAG = "fp_pricing_cta"
@@ -88,14 +89,20 @@ def main(input_fn: Callable[[str], str] = input) -> None:
         if not confirm(f'Type "{SEED_FLAG}" to approve and create it', SEED_FLAG, input_fn):
             print("Cancelled. Nothing was changed.")
             return
+        approver = ask_approver(input_fn)
+        if approver is None:
+            print("Cancelled: an approver name is required. Nothing was changed.")
+            return
         record_plan(plan, audit)
-        approval = approve(plan, operator_name(), audit)
+        approval = approve(plan, approver, audit)
         execute_plan(
             plan,
             approval,
             runner=client,
+            admin=AdminAPI(settings),
             audit=audit,
             project_id=settings.flagsmith_project_id,
+            environment_api_key=settings.flagsmith_environment_key.get_secret_value(),
             allow_production=settings.allow_production,
             on_call=lambda call, outcome: print(f"  done: {call.summary[0]}"),
         )

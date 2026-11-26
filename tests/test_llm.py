@@ -110,3 +110,41 @@ def test_cache_bypass(make_llm: Callable[..., LLMClient], fake_chat: FakeChatCli
     llm.complete_text("sys", "hi")
 
     assert llm.complete_text("sys", "hi", use_cache=False) == "second"
+
+
+def test_invalid_json_is_never_cached(
+    make_llm: Callable[..., LLMClient], fake_chat: FakeChatClient
+) -> None:
+    fake_chat.queue('{"answer": "x"}', '{"answer": "y"}', '{"answer": 3}')
+
+    with pytest.raises(LLMError):
+        make_llm(cache=True).complete_json("sys", "q", Answer)
+    assert make_llm(cache=True).complete_json("sys", "q", Answer).answer == 3
+    assert len(fake_chat.calls) == 3  # the failed replies were not served from the cache
+
+
+def test_valid_json_is_served_from_cache(
+    make_llm: Callable[..., LLMClient], fake_chat: FakeChatClient
+) -> None:
+    fake_chat.queue('{"answer": 7}')
+
+    assert make_llm(cache=True).complete_json("sys", "q", Answer).answer == 7
+    assert make_llm(cache=True).complete_json("sys", "q", Answer).answer == 7
+    assert len(fake_chat.calls) == 1
+
+
+def test_corrupt_cache_file_is_reported(
+    make_llm: Callable[..., LLMClient],
+    fake_chat: FakeChatClient,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path,
+) -> None:
+    llm = make_llm(cache=True)
+    fake_chat.queue("first", "second")
+    llm.complete_text("sys", "hi")
+    for path in (tmp_path / "cache").glob("*.json"):
+        path.write_text("not json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        assert make_llm(cache=True).complete_text("sys", "hi") == "second"
+    assert any("unreadable LLM cache file" in record.message for record in caplog.records)

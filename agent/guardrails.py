@@ -63,7 +63,7 @@ def check_no_deletions(calls: list[PlannedCall]) -> GuardrailCheck:
 
 def check_prefix(calls: list[PlannedCall]) -> GuardrailCheck:
     """Every flag FlagPilot creates starts with ``fp_``."""
-    names = [call.arguments.get("name") for call in calls]
+    names = [call.arguments.get("name") for call in calls if call.tool == "create_feature"]
     bad = [name for name in names if isinstance(name, str) and not name.startswith(FLAG_PREFIX)]
     if bad:
         return GuardrailCheck(

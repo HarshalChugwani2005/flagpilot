@@ -94,11 +94,14 @@ class ResponseCache:
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def get(self, key: str) -> str | None:
-        """Return the cached reply for ``key``, or None if absent or unreadable."""
+        """Return the cached reply for ``key``, or None (unreadable files are reported)."""
         path = self.directory / f"{key}.json"
         try:
             return json.loads(path.read_text(encoding="utf-8"))["content"]
-        except (OSError, ValueError, KeyError):
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError, KeyError) as error:
+            log.warning("Ignoring unreadable LLM cache file %s (%s); asking NIM again", path, error)
             return None
 
     def put(self, key: str, model: str, content: str) -> None:
@@ -176,13 +179,13 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user},
         ]
-        reply = self._chat(messages, temperature, guided_schema=schema)
+        reply = self._chat(messages, temperature, guided_schema=schema, store=False)
         try:
-            return self._validate(reply, schema_model, context)
+            return self._validated(messages, temperature, reply, schema_model, context)
         except ValidationError as error:
             problems = _describe_validation(error)
         log.info("LLM JSON failed validation, retrying once:\n%s", problems)
-        messages += [
+        messages = messages + [
             {"role": "assistant", "content": reply},
             {
                 "role": "user",
@@ -190,15 +193,29 @@ class LLMClient:
                 f"{problems}\nReply with corrected JSON only, matching the schema.",
             },
         ]
-        reply = self._chat(messages, temperature, guided_schema=schema)
+        reply = self._chat(messages, temperature, guided_schema=schema, store=False)
         try:
-            return self._validate(reply, schema_model, context)
+            return self._validated(messages, temperature, reply, schema_model, context)
         except ValidationError as error:
             raise LLMError(
                 "The AI returned an answer FlagPilot could not use, even after a retry. "
                 "Try rephrasing your request.",
                 detail=_describe_validation(error),
             ) from error
+
+    def _validated(
+        self,
+        messages: list[Message],
+        temperature: float,
+        reply: str,
+        schema_model: type[T],
+        context: Mapping[str, Any] | None,
+    ) -> T:
+        """Validate ``reply``; only a reply that validates is written to the cache."""
+        result = self._validate(reply, schema_model, context)
+        if self._cache:
+            self._cache.put(ResponseCache.key(self.model, messages, temperature), self.model, reply)
+        return result
 
     @staticmethod
     def _validate(reply: str, schema_model: type[T], context: Mapping[str, Any] | None) -> T:
@@ -212,14 +229,18 @@ class LLMClient:
         *,
         guided_schema: dict[str, Any] | None = None,
         use_cache: bool = True,
+        store: bool = True,
     ) -> str:
-        """Send ``messages`` (cached if enabled) and return the reply text."""
+        """Send ``messages`` (read from the cache if enabled) and return the reply text.
+
+        ``store=False`` leaves writing to the caller, so JSON is cached only once valid.
+        """
         cache = self._cache if use_cache else None
         key = ResponseCache.key(self.model, messages, temperature)
         if cache and (cached := cache.get(key)) is not None:
             return cached
         content = self._request_with_guided_fallback(messages, temperature, guided_schema)
-        if cache:
+        if cache and store:
             cache.put(key, self.model, content)
         return content
 

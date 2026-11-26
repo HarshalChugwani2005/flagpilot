@@ -7,6 +7,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+import agent.admin_api
 import agent.config
 import agent.planner
 import agent.reporter
@@ -37,6 +38,7 @@ def runner(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> FakeRunner:
     monkeypatch.setattr(agent.config, "get_settings", lambda: settings)
     monkeypatch.setattr(FlagsmithClient, "list_flag_names", lambda self: ["fp_existing"])
     monkeypatch.setattr(FlagsmithClient, "call_tool", lambda self, n, a: fake.call_tool(n, a))
+    monkeypatch.setattr(agent.admin_api, "AdminAPI", lambda settings: fake)
     monkeypatch.setattr(agent.planner, "plan_experiment", lambda request, existing: make_plan())
     return fake
 
@@ -76,8 +78,14 @@ def test_approve_and_apply_runs_every_call(runner: FakeRunner, settings: Setting
     app.button(key="approve").click().run()
 
     assert not app.exception
-    assert [name for name, _ in runner.calls] == ["create_feature"]
-    assert events(settings) == ["planned", "approved", "call", "result", "timed"]
+    assert [name for name, _ in runner.calls] == [
+        "create_feature",
+        "list_feature_multivariate_options",
+        "create_metric",
+        "create_experiment",
+        "admin_api.start_experiment",
+    ]
+    assert events(settings) == ["planned", "approved"] + ["call", "result"] * 5 + ["timed"]
     assert any("created in Flagsmith" in item.value for item in app.success)
     assert any("FlagPilot:" in item.value and "your review:" in item.value for item in app.caption)
 
@@ -89,7 +97,7 @@ def test_dry_run_changes_nothing(runner: FakeRunner, settings: Settings) -> None
     app.button(key="approve").click().run()
 
     assert runner.calls == []
-    assert events(settings) == ["planned", "approved", "call"]
+    assert events(settings) == ["planned", "approved"] + ["call"] * 5
     assert any("Dry run complete" in item.value for item in app.info)
 
 
@@ -252,7 +260,13 @@ def test_apply_for_real_after_a_dry_run(runner: FakeRunner, settings: Settings) 
     app.button(key="approve").click().run()
 
     assert not app.exception
-    assert [name for name, _ in runner.calls] == ["create_feature"]
+    assert [name for name, _ in runner.calls] == [
+        "create_feature",
+        "list_feature_multivariate_options",
+        "create_metric",
+        "create_experiment",
+        "admin_api.start_experiment",
+    ]
     assert events(settings)[-3:] == ["call", "result", "timed"]
     assert events(settings).count("timed") == 1  # the dry run was not timed
 

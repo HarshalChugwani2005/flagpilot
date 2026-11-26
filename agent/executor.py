@@ -5,8 +5,9 @@ from typing import Any, Protocol
 
 from agent.admin_api import DELETE_FEATURE
 from agent.audit import AuditLog
-from agent.changes import build_changes
+from agent.changes import LIST_OPTIONS, REF, build_changes
 from agent.errors import FlagPilotError
+from agent.flagsmith_client import results_of
 from agent.guardrails import FLAG_PREFIX, check_approval, validate_plan
 from agent.models import (
     SAFE_ENVIRONMENT,
@@ -28,6 +29,8 @@ from agent.rollout import (
     rollout_allocations,
 )
 
+ADMIN_PREFIX = "admin_api."
+
 
 class ToolRunner(Protocol):
     """Anything that can run a Flagsmith MCP tool (implemented by FlagsmithClient)."""
@@ -47,6 +50,32 @@ def _refuse(audit: AuditLog, plan: ExperimentPlan, current_hash: str, problems: 
         "refused", flag_name=plan.flag_name, plan_hash=current_hash, error="; ".join(problems)
     )
     raise ExecutionError("FlagPilot did not run this plan: " + " ".join(problems))
+
+
+def _resolve(value: Any, refs: dict[str, Any]) -> Any:
+    """Replace ``$ref:<name>`` (and ``$ref:<name>:str``) with values from earlier replies."""
+    if isinstance(value, dict):
+        return {key: _resolve(item, refs) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve(item, refs) for item in value]
+    if not (isinstance(value, str) and value.startswith(REF)):
+        return value
+    name, _, cast = value.removeprefix(REF).partition(":")
+    if refs.get(name) is None:
+        raise ExecutionError(
+            f"Flagsmith's earlier reply did not include {name}, so the next step was not sent."
+        )
+    return str(refs[name]) if cast == "str" else refs[name]
+
+
+def _remember(tool: str, result: Any, refs: dict[str, Any]) -> None:
+    """Keep the ids later calls refer to (the new object's ``id``, option ids by key)."""
+    if isinstance(result, dict) and "id" in result:
+        refs[f"{tool}.id"] = result["id"]
+    if tool == LIST_OPTIONS:
+        for option in results_of(result):
+            if isinstance(option.get("key"), str) and "id" in option:
+                refs[f"option.{option['key']}"] = option["id"]
 
 
 def _run_call(
@@ -71,6 +100,8 @@ def execute_plan(
     runner: ToolRunner | None,
     audit: AuditLog,
     project_id: int,
+    environment_api_key: str | None = None,
+    admin: ToolRunner | None = None,
     allow_production: bool = False,
     dry_run: bool = False,
     on_call: Callable[[PlannedCall, CallOutcome], None] | None = None,
@@ -78,9 +109,10 @@ def execute_plan(
     """Apply ``plan`` in Flagsmith, logging every call and result to the audit log.
 
     Guardrails always run. A real run additionally needs an approval whose hash matches
-    the plan *now* and which is present in the audit log. ``dry_run`` logs the calls it
-    would make without contacting Flagsmith (and needs no approval). ``on_call`` is told
-    about each finished call, so a UI can show progress.
+    the plan *now* and which is present in the audit log. ``runner`` (MCP) runs the MCP
+    tools and ``admin`` the ``admin_api.*`` calls; ``$ref:`` values are filled in from
+    earlier replies. ``dry_run`` logs the calls without contacting Flagsmith (and needs no
+    approval). ``on_call`` is told about each finished call, so a UI can show progress.
     """
     current_hash = plan_hash(plan)
     calls = build_changes(plan, project_id)
@@ -96,21 +128,37 @@ def execute_plan(
             problems.append("The approval is not in the audit log. Approve the plan again.")
         if runner is None:
             problems.append("No Flagsmith connection was provided.")
+        if admin is None and any(call.tool.startswith(ADMIN_PREFIX) for call in calls):
+            problems.append("No Flagsmith Admin API connection was provided.")
+        if not environment_api_key:
+            problems.append("FLAGSMITH_ENVIRONMENT_KEY is needed to create the experiment.")
     if problems:
         _refuse(audit, plan, current_hash, problems)
 
     approver = approval.approver if approval else None
     context = {"flag_name": plan.flag_name, "plan_hash": current_hash, "approver": approver}
     outcomes = []
-    for call in calls:
-        audit.record("call", tool=call.tool, arguments=call.arguments, dry_run=dry_run, **context)
+    refs: dict[str, Any] = {"environment_api_key": environment_api_key}
+    for planned in calls:
         if dry_run:
-            outcome = CallOutcome(tool=call.tool, ok=True, dry_run=True)
+            audit.record(
+                "call", tool=planned.tool, arguments=planned.arguments, dry_run=True, **context
+            )
+            outcome = CallOutcome(tool=planned.tool, ok=True, dry_run=True)
         else:
-            outcome = _run_call(call, runner, audit, context)
+            try:
+                arguments = _resolve(planned.arguments, refs)
+            except ExecutionError as error:
+                audit.record("error", tool=planned.tool, error=error.friendly, **context)
+                raise
+            call = planned.model_copy(update={"arguments": arguments})
+            audit.record("call", tool=call.tool, arguments=call.arguments, **context)
+            route = admin if call.tool.startswith(ADMIN_PREFIX) else runner
+            outcome = _run_call(call, route, audit, context)
+            _remember(call.tool, outcome.result, refs)
         outcomes.append(outcome)
         if on_call:
-            on_call(call, outcome)
+            on_call(planned, outcome)
 
     return ExecutionResult(
         flag_name=plan.flag_name, plan_hash=current_hash, dry_run=dry_run, outcomes=outcomes
