@@ -16,10 +16,10 @@ run-ui:
 	$(PYTHON) -m streamlit run ui/app.py
 
 run-store:
-	$(PYTHON) -m http.server 8000 --directory demo-store
+	$(PYTHON) scripts/serve_store.py --port 8000
 
 sim:
-	$(PYTHON) scripts/traffic_sim.py
+	$(PYTHON) scripts/traffic_sim.py $(ARGS)
 
 seed:
 	$(PYTHON) scripts/seed_demo.py
@@ -29,6 +29,7 @@ reset:
 
 test:
 	$(PYTHON) -m pytest -q
+	node --test tests/test_demo_store.mjs
 
 lint:
 	$(PYTHON) -m ruff check .
