@@ -24,7 +24,7 @@ class ReportError(FlagPilotError):
 
 
 class CountsSource(Protocol):
-    """Anything that can return per-variant counts (implemented by FlagsmithClient)."""
+    """Anything that can return per-variant counts (implemented by FlagsmithResults)."""
 
     def get_variant_counts(self, flag_name: str, metric_event: str) -> dict[str, VariantCounts]:
         """Visitors and ``metric_event`` conversions per variant of ``flag_name``."""
@@ -33,7 +33,14 @@ class CountsSource(Protocol):
 
 def fetch_result(plan: ExperimentPlan, source: CountsSource) -> ExperimentResult:
     """Fetch the experiment's counts from Flagsmith and compute its statistics."""
-    return analyse(plan, source.get_variant_counts(plan.flag_name, plan.metric_event))
+    counts = source.get_variant_counts(plan.flag_name, plan.metric_event)
+    missing = [variant.name for variant in plan.variants if variant.name not in counts]
+    if missing:
+        raise ReportError(
+            f"Flagsmith has not recorded any visitors for {', '.join(missing)} yet. Send "
+            "traffic (make sim) and reload in a few minutes."
+        )
+    return analyse(plan, counts)
 
 
 def suggested_verdict(result: ExperimentResult) -> str:

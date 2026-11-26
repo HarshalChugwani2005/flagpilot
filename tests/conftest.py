@@ -50,16 +50,16 @@ class FakeRunner:
         if self.error:
             raise self.error
         if name == "create_feature":
-            # Like real Flagsmith: the sent "key" comes back null; values are kept.
-            self._options = [
-                {"id": 500 + index, "key": None, "string_value": option["string_value"]}
-                for index, option in enumerate(arguments.get("multivariate_options", []))
-            ]
-            return {
-                "id": 99,
-                "name": arguments.get("name"),
-                "multivariate_options": self._options,
+            self._options = []
+            return {"id": 99, "name": arguments.get("name"), "multivariate_options": []}
+        if name == "create_feature_multivariate_option":
+            option = {
+                "id": 500 + len(self._options),
+                "key": arguments.get("key"),
+                "string_value": arguments.get("string_value"),
             }
+            self._options.append(option)
+            return option
         if name == "list_feature_multivariate_options":
             return {"results": self._options}
         if name == "admin_api.create_metric":

@@ -16,6 +16,7 @@ from agent.audit import AuditLog
 from agent.config import Settings
 from agent.flagsmith_client import FlagsmithClient, FlagsmithError
 from agent.models import ClarifyingQuestions, VariantCounts
+from agent.results import FlagsmithResults
 from agent.timing import ExperimentTiming, record_timing
 from tests.conftest import FakeRunner, make_plan
 
@@ -80,7 +81,7 @@ def test_approve_and_apply_runs_every_call(runner: FakeRunner, settings: Setting
     assert not app.exception
     assert [name for name, _ in runner.calls] == [
         "create_feature",
-        "list_feature_multivariate_options",
+        "create_feature_multivariate_option",
         "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",
@@ -175,7 +176,7 @@ def go_live(settings: Settings, **plan_changes: Any) -> None:
 def test_experiments_grid(runner: FakeRunner, settings: Settings, monkeypatch) -> None:
     go_live(settings)
     monkeypatch.setattr(
-        FlagsmithClient,
+        FlagsmithResults,
         "get_variant_counts",
         lambda self, flag, event: {
             "control": VariantCounts(visitors=120, conversions=10),
@@ -192,7 +193,7 @@ def test_experiments_grid(runner: FakeRunner, settings: Settings, monkeypatch) -
 def test_results_winner(runner: FakeRunner, settings: Settings, monkeypatch) -> None:
     go_live(settings, min_sample_size=300)
     monkeypatch.setattr(
-        FlagsmithClient,
+        FlagsmithResults,
         "get_variant_counts",
         lambda self, flag, event: {
             "control": VariantCounts(visitors=1000, conversions=100),
@@ -262,7 +263,7 @@ def test_apply_for_real_after_a_dry_run(runner: FakeRunner, settings: Settings) 
     assert not app.exception
     assert [name for name, _ in runner.calls] == [
         "create_feature",
-        "list_feature_multivariate_options",
+        "create_feature_multivariate_option",
         "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",

@@ -33,7 +33,7 @@ def test_approved_plan_runs_and_every_call_is_logged(audit: AuditLog) -> None:
 
     assert [name for name, _ in runner.calls] == [
         "create_feature",
-        "list_feature_multivariate_options",
+        "create_feature_multivariate_option",
         "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",
@@ -263,7 +263,8 @@ def test_references_are_filled_from_earlier_replies(audit: AuditLog) -> None:
     run_live(make_plan(traffic_percent=40), audit, runner)
 
     sent = dict(runner.calls)
-    assert sent["list_feature_multivariate_options"] == {"feature_pk": 99, "project_pk": "7"}
+    assert sent["create_feature_multivariate_option"]["feature_pk"] == 99
+    assert sent["create_feature_multivariate_option"]["key"] == "green_buy_now"
     metric = sent["admin_api.create_metric"]
     assert metric["definition"] == {"version": 1, "event": "purchase"}
     assert metric["environment_api_key"] == "env-test"

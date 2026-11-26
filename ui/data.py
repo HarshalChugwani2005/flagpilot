@@ -6,6 +6,7 @@ from agent.errors import FlagPilotError
 from agent.flagsmith_client import FlagsmithClient
 from agent.models import ExperimentPlan, ExperimentResult
 from agent.reporter import fetch_result
+from agent.results import FlagsmithResults
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -23,6 +24,6 @@ def experiment_result(plan_json: str) -> tuple[ExperimentResult | None, str | No
     """Return ``(result, None)`` computed from Flagsmith's counts, or ``(None, error)``."""
     plan = ExperimentPlan.model_validate_json(plan_json)
     try:
-        return fetch_result(plan, FlagsmithClient()), None
+        return fetch_result(plan, FlagsmithResults()), None
     except FlagPilotError as error:
         return None, error.friendly

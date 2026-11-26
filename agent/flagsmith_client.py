@@ -24,7 +24,6 @@ from mcp.client.stdio import stdio_client
 from agent import config
 from agent.config import Settings
 from agent.errors import ConfigError, FlagPilotError
-from agent.models import VariantCounts
 
 STARTUP_TIMEOUT_SECONDS = 240  # first run clones the server from GitHub
 CALL_TIMEOUT_SECONDS = 60
@@ -252,18 +251,6 @@ class FlagsmithClient:
             if not (isinstance(response, dict) and response.get("next")):
                 return flags
             page += 1
-
-    def get_variant_counts(self, flag_name: str, metric_event: str) -> dict[str, VariantCounts]:
-        """Visitors and conversions per variant, from Flagsmith's experiment results.
-
-        FlagPilot creates and starts the Flagsmith experiment, but Flagsmith does not
-        document the shape of the results/exposures responses yet, so they are not parsed.
-        """
-        raise FlagsmithError(
-            "Flagsmith is running this experiment, but FlagPilot cannot read its results "
-            "yet: Flagsmith has not documented the results response. Open the experiment in "
-            "Flagsmith to see them."
-        )
 
 
 def _smoke() -> None:

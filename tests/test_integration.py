@@ -116,10 +116,10 @@ def test_plan_approve_create_read_back_and_clean_up(
                 {"feature_pk": flag_id, "project_pk": str(project_id)},
             )
         )
-        # Flagsmith returns option "key" as null, so compare the stored values.
-        served = [json.loads(option["string_value"]) for option in options]
+        # Every option must carry its variant key, or Flagsmith records no exposures for it.
+        served = {option["key"]: json.loads(option["string_value"]) for option in options}
         for variant in plan.variants[1:]:
-            assert variant.value in served
+            assert served.get(variant.name) == variant.value
         started = by_tool["admin_api.start_experiment"]
         assert isinstance(started, dict) and started.get("status") == "running"
     finally:

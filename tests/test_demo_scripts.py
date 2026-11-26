@@ -175,7 +175,7 @@ def test_seed_creates_the_experiment_then_runs_traffic(
 
     assert [name for name, _ in patched["flagsmith"].calls] == [
         "create_feature",
-        "list_feature_multivariate_options",
+        "create_feature_multivariate_option",
         "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",

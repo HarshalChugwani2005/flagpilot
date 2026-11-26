@@ -2,11 +2,13 @@
 
 The calls follow Flagsmith's documented experimentation flow:
 
-1. MCP ``create_feature``: a multivariate flag. The first variant is the control and
-   becomes the flag's base value; the others become options with 0% default allocation,
-   so identities outside the experiment see the control. Created switched off (features
-   are project-wide, so this keeps every environment, production included, unchanged).
-2. MCP ``list_feature_multivariate_options``: read back the option ids.
+1. MCP ``create_feature``: a multivariate flag whose base value is the control. Created
+   switched off (features are project-wide, so this keeps every environment, production
+   included, unchanged).
+2. MCP ``create_feature_multivariate_option``, once per other variant, with ``key`` = the
+   variant name and 0% default allocation (identities outside the experiment see the
+   control). Flagsmith only accepts ``key`` on this endpoint, not inline in
+   ``create_feature``, and an option without a key records no exposures.
 3. Admin API ``.../experiment-metrics/`` (the MCP ``create_metric`` tool drops the
    required ``definition``): ``{"aggregation": "occurrence", "direction": "up",
    "definition": {"version": 1, "event": <metric_event>}}``.
@@ -21,10 +23,10 @@ in by the executor; ``$ref:<name>:str`` passes the value as a string.
 import json
 from typing import Any
 
-from agent.models import ExperimentPlan, PlannedCall
+from agent.models import ExperimentPlan, PlannedCall, Variant
 
 CREATE_FEATURE = "create_feature"
-LIST_OPTIONS = "list_feature_multivariate_options"
+CREATE_OPTION = "create_feature_multivariate_option"
 CREATE_METRIC = "admin_api.create_metric"
 CREATE_EXPERIMENT = "create_experiment"
 START_EXPERIMENT = "admin_api.start_experiment"
@@ -46,8 +48,8 @@ def option_values(plan: ExperimentPlan) -> dict[str, str]:
 def match_options(options: list[dict[str, Any]], values: dict[str, str]) -> dict[str, int]:
     """Map variant name -> Flagsmith option id by stored value.
 
-    Flagsmith ignores the ``key`` FlagPilot sends with each option (it comes back null),
-    so options are matched on ``string_value``, which plans keep unique per variant.
+    Matching on ``string_value`` (unique per variant in a plan) also works for flags
+    created before FlagPilot set option keys, which Flagsmith stored as null.
     """
     ids_by_value = {
         option["string_value"]: option["id"]
@@ -78,8 +80,8 @@ def traffic_segments(plan: ExperimentPlan) -> dict[str, float]:
 
 
 def _create_feature(plan: ExperimentPlan, project_id: int) -> PlannedCall:
-    """Build the multivariate flag: control as base value, options at 0% by default."""
-    control, *treatments = plan.variants
+    """Build the multivariate flag with the control as its base value."""
+    control = plan.variants[0]
     return PlannedCall(
         tool=CREATE_FEATURE,
         arguments={
@@ -89,25 +91,29 @@ def _create_feature(plan: ExperimentPlan, project_id: int) -> PlannedCall:
             "description": plan.hypothesis,
             "default_enabled": False,
             "initial_value": _compact(control.value),
-            "multivariate_options": [
-                {
-                    "key": variant.name,
-                    "type": "unicode",
-                    "string_value": _compact(variant.value),
-                    "default_percentage_allocation": 0,
-                }
-                for variant in treatments
-            ],
         },
         summary=[
             f'Create multivariate flag "{plan.flag_name}" in Flagsmith project {project_id}, '
             "switched off in every environment",
             f'Set the control value "{control.name}" = {_compact(control.value)}',
-            *(
-                f'Add variant "{variant.name}" = {_compact(variant.value)}'
-                for variant in treatments
-            ),
         ],
+    )
+
+
+def _create_option(variant: Variant, project_id: int) -> PlannedCall:
+    """Add one variant as a keyed option, 0% outside the experiment."""
+    return PlannedCall(
+        tool=CREATE_OPTION,
+        arguments={
+            "feature_pk": f"{REF}create_feature.id",
+            "project_pk": str(project_id),
+            "feature": f"{REF}create_feature.id",  # Flagsmith also requires it in the body
+            "key": variant.name,
+            "type": "unicode",
+            "string_value": _compact(variant.value),
+            "default_percentage_allocation": 0,
+        },
+        summary=[f'Add variant "{variant.name}" = {_compact(variant.value)}'],
     )
 
 
@@ -154,11 +160,7 @@ def build_changes(plan: ExperimentPlan, project_id: int) -> list[PlannedCall]:
     """Return every Flagsmith call that implements ``plan`` in project ``project_id``."""
     return [
         _create_feature(plan, project_id),
-        PlannedCall(
-            tool=LIST_OPTIONS,
-            arguments={"feature_pk": f"{REF}create_feature.id", "project_pk": str(project_id)},
-            summary=["Read back the variant option ids"],
-        ),
+        *(_create_option(variant, project_id) for variant in plan.variants[1:]),
         PlannedCall(
             tool=CREATE_METRIC,
             arguments={

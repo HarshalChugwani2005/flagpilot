@@ -5,7 +5,7 @@ The rollout uses official Flagsmith MCP tools only:
 1. ``list_project_environments``: find the environment by its API key (and refuse v2
    feature versioning, which needs the versioning tools instead).
 2. ``list_project_features`` (``environment=<id>``): the flag's id and feature state id.
-3. ``list_feature_multivariate_options``: option ids by variant key.
+3. ``list_feature_multivariate_options``: option ids, matched on the stored value.
 4. ``update_environment_feature_state``: winner 100%, every other option 0%. When the
    control wins, every option is set to 0% so all identities get the control value.
 """

@@ -6,8 +6,11 @@ Used where the official MCP server cannot do the job:
 - ``POST /api/v1/environments/{key}/experiment-metrics/`` (the MCP ``create_metric`` tool
   drops the required ``definition`` field; body from Flagsmith's Experimentation docs)
 - ``POST /api/v1/environments/{key}/experiments/{id}/start/`` (no start tool; docs)
+- ``POST /api/v1/environments/{key}/experiments/{id}/results/refresh/`` (no refresh tool;
+  Flagsmith's "Set up with a coding agent" docs). It only asks Flagsmith to recompute
+  results; it changes no flag or experiment, so it is a read and is not audited.
 
-Both are authenticated with an Organisation (Master) API key.
+All are authenticated with an Organisation (Master) API key.
 """
 
 from typing import Any
@@ -18,6 +21,7 @@ from agent.config import Settings
 from agent.flagsmith_client import FlagsmithError
 
 TIMEOUT_SECONDS = 20
+HTTP_TOO_MANY_REQUESTS = 429
 DELETE_FEATURE = "admin_api.delete_feature"
 START_EXPERIMENT = "admin_api.start_experiment"
 CREATE_METRIC = "admin_api.create_metric"
@@ -67,6 +71,19 @@ class AdminAPI:
         response = self._send("POST", url)
         self._raise_for_status(response, f"start experiment {experiment_id}")
         return response.json() if response.content else {"started": experiment_id}
+
+    def refresh_results(self, environment_key: str, experiment_id: int) -> bool:
+        # path: Admin API (the MCP server has no refresh tool)
+        """Ask Flagsmith to recompute results; False if it refreshed in the last 5 minutes."""
+        url = (
+            f"{self._base}/environments/{environment_key}/experiments/{experiment_id}"
+            "/results/refresh/"
+        )
+        response = self._send("POST", url)
+        if response.status_code == HTTP_TOO_MANY_REQUESTS:
+            return False
+        self._raise_for_status(response, f"refresh the results of experiment {experiment_id}")
+        return True
 
     def delete_feature(self, project_id: int, feature_id: int) -> dict[str, Any]:  # path: Admin API
         """Delete one feature; a flag that is already gone counts as deleted."""

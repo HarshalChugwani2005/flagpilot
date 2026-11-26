@@ -32,7 +32,7 @@ def test_allocations_with_three_variants_sum_to_100() -> None:
 def test_calls_follow_flagsmiths_experiment_flow() -> None:
     assert [call.tool for call in build_changes(make_plan(), project_id=7)] == [
         "create_feature",
-        "list_feature_multivariate_options",
+        "create_feature_multivariate_option",
         "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",
@@ -40,15 +40,18 @@ def test_calls_follow_flagsmiths_experiment_flow() -> None:
 
 
 def test_create_feature_call_matches_plan() -> None:
-    args = build_changes(make_plan(), project_id=7)[0].arguments
+    feature, option_call, *_ = build_changes(make_plan(), project_id=7)
+    args = feature.arguments
 
     assert args["project_pk"] == 7
     assert args["name"] == "fp_checkout_button_color"
     assert args["type"] == "MULTIVARIATE"
     assert args["default_enabled"] is False
     assert json.loads(args["initial_value"]) == {"color": "#6b7280", "label": "Add to cart"}
-    [option] = args["multivariate_options"]
-    assert option["key"] == "green_buy_now"
+    assert "multivariate_options" not in args  # Flagsmith drops keys sent inline
+    option = option_call.arguments
+    assert option["feature_pk"] == option["feature"] == "$ref:create_feature.id"
+    assert option["key"] == "green_buy_now"  # without a key Flagsmith records no exposures
     assert json.loads(option["string_value"]) == {"color": "#16a34a", "label": "Buy now"}
     assert option["default_percentage_allocation"] == 0  # outside the experiment: control
 
@@ -72,7 +75,7 @@ def test_summary_lists_each_operation() -> None:
     lines = [line for call in build_changes(make_plan(), project_id=7) for line in call.summary]
 
     assert lines[0].startswith('Create multivariate flag "fp_checkout_button_color"')
-    assert 'Add variant "green_buy_now"' in lines[2]
+    assert lines[2] == 'Add variant "green_buy_now" = {"color":"#16a34a","label":"Buy now"}'
     assert any(line.startswith('Create metric "Purchase conversion"') for line in lines)
     assert any("for 50% of visitors" in line for line in lines)
     assert any("50% of the experiment (25% of all identities)" in line for line in lines)

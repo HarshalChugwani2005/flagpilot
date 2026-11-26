@@ -5,9 +5,8 @@ from typing import Any, Protocol
 
 from agent.admin_api import DELETE_FEATURE
 from agent.audit import AuditLog
-from agent.changes import CREATE_FEATURE, LIST_OPTIONS, REF, build_changes, match_options
+from agent.changes import CREATE_OPTION, REF, build_changes
 from agent.errors import FlagPilotError
-from agent.flagsmith_client import results_of
 from agent.guardrails import FLAG_PREFIX, check_approval, validate_plan
 from agent.models import (
     SAFE_ENVIRONMENT,
@@ -30,7 +29,6 @@ from agent.rollout import (
 )
 
 ADMIN_PREFIX = "admin_api."
-OPTION_VALUES = "_option_values"
 
 
 class ToolRunner(Protocol):
@@ -70,21 +68,12 @@ def _resolve(value: Any, refs: dict[str, Any]) -> Any:
 
 
 def _remember(call: PlannedCall, result: Any, refs: dict[str, Any]) -> None:
-    """Keep the ids later calls refer to: the new object's ``id`` and option ids by name."""
-    if isinstance(result, dict) and "id" in result:
-        refs[f"{call.tool}.id"] = result["id"]
-    if call.tool == CREATE_FEATURE:
-        refs[OPTION_VALUES] = {
-            option["key"]: option["string_value"]
-            for option in call.arguments.get("multivariate_options", [])
-        }
-        options = result.get("multivariate_options", []) if isinstance(result, dict) else []
-    elif call.tool == LIST_OPTIONS:
-        options = results_of(result)
-    else:
+    """Keep the ids later calls refer to: the new object's ``id``, and option ids by key."""
+    if not (isinstance(result, dict) and "id" in result):
         return
-    for name, option_id in match_options(options, refs.get(OPTION_VALUES, {})).items():
-        refs[f"option.{name}"] = option_id
+    refs[f"{call.tool}.id"] = result["id"]
+    if call.tool == CREATE_OPTION:
+        refs[f"option.{call.arguments['key']}"] = result["id"]
 
 
 def _run_call(
