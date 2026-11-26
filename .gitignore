@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Runtime artefacts
+audit_log.jsonl
+.llm_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Node (demo-store)
+node_modules/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
