@@ -9,9 +9,9 @@ from agent.changes import OUTSIDE, traffic_segments
 from agent.config import get_settings
 from agent.errors import FlagPilotError
 from agent.experiments import ExperimentSummary, list_experiments
-from agent.models import utc_now
+from agent.models import ExperimentResult, utc_now
 from ui.components import show_error, split_bar_html, status_pill
-from ui.data import variant_counts
+from ui.data import experiment_result
 
 COLUMNS = 3
 
@@ -24,27 +24,32 @@ def days_running(live_since: datetime | None, now: datetime) -> str:
     return "Today" if days == 0 else f"{days} day{'s' if days != 1 else ''}"
 
 
-def visitors_so_far(experiment: ExperimentSummary) -> tuple[str, str | None]:
-    """Visitor count from Flagsmith for live experiments, plus any error message."""
-    if experiment.live_since is None:
-        return "—", None
-    counts, error = variant_counts(experiment.flag_name, experiment.plan.metric_event)
-    if counts is None:
-        return "—", error
-    return f"{sum(item.visitors for item in counts.values()):,}", None
+def live_result(experiment: ExperimentSummary) -> tuple[ExperimentResult | None, str | None]:
+    """Results from Flagsmith for running experiments only."""
+    if experiment.status != "Running":
+        return None, None
+    return experiment_result(experiment.plan.model_dump_json())
 
 
 def render_card(experiment: ExperimentSummary, now: datetime) -> str | None:
     """One experiment card; returns a Flagsmith error to show once, if any."""
+    result, error = live_result(experiment)
+    status = experiment.status
+    if status == "Running" and result is not None and result.verdict == "winner":
+        status = "Ready to decide"
     with st.container(border=True):
         st.markdown(f"**`{experiment.flag_name}`**")
-        st.html(status_pill(experiment.status))
+        st.html(status_pill(status))
         st.caption(experiment.plan.hypothesis)
         st.html(split_bar_html(traffic_segments(experiment.plan), neutral_name=OUTSIDE))
-        visitors, error = visitors_so_far(experiment)
         left, right = st.columns(2)
-        left.metric("Visitors so far", visitors)
+        left.metric("Visitors so far", f"{result.visitors:,}" if result else "—")
         right.metric("Running", days_running(experiment.live_since, now))
+        if experiment.status == "Rolled out":
+            st.caption(
+                f"Winner **{experiment.winner}** at 100% · stale: "
+                + ", ".join(experiment.stale_variants)
+            )
         if st.button(
             "View results",
             key=f"view_{experiment.flag_name}",
@@ -79,7 +84,7 @@ def main() -> None:
                 if error := render_card(experiment, now):
                     errors.add(error)
     for error in errors:
-        st.warning(f"Visitor counts are unavailable: {error}")
+        st.warning(f"Live results are unavailable: {error}")
 
 
 main()

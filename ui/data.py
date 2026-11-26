@@ -1,10 +1,11 @@
-"""Cached reads from Flagsmith for the UI (short TTL so the sidebar stays current)."""
+"""Cached reads from Flagsmith for the UI (short TTL so pages stay current)."""
 
 import streamlit as st
 
 from agent.errors import FlagPilotError
 from agent.flagsmith_client import FlagsmithClient
-from agent.models import VariantCounts
+from agent.models import ExperimentPlan, ExperimentResult
+from agent.reporter import fetch_result
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -18,11 +19,10 @@ def flagsmith_health() -> tuple[bool, str]:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def variant_counts(
-    flag_name: str, metric_event: str
-) -> tuple[dict[str, VariantCounts] | None, str | None]:
-    """Return ``(counts, None)`` from Flagsmith, or ``(None, friendly error)``."""
+def experiment_result(plan_json: str) -> tuple[ExperimentResult | None, str | None]:
+    """Return ``(result, None)`` computed from Flagsmith's counts, or ``(None, error)``."""
+    plan = ExperimentPlan.model_validate_json(plan_json)
     try:
-        return FlagsmithClient().get_variant_counts(flag_name, metric_event), None
+        return fetch_result(plan, FlagsmithClient()), None
     except FlagPilotError as error:
         return None, error.friendly

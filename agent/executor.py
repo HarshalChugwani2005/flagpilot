@@ -8,13 +8,22 @@ from agent.changes import build_changes
 from agent.errors import FlagPilotError
 from agent.guardrails import check_approval, validate_plan
 from agent.models import (
+    SAFE_ENVIRONMENT,
     ApprovalRecord,
     CallOutcome,
     ExecutionResult,
     ExperimentPlan,
-    ExperimentResult,
     PlannedCall,
+    RolloutPlan,
+    model_hash,
     plan_hash,
+)
+from agent.rollout import (
+    RolloutError,
+    find_environment,
+    find_feature_state,
+    option_ids,
+    rollout_allocations,
 )
 
 
@@ -106,18 +115,124 @@ def execute_plan(
     )
 
 
-def roll_out_winner(result: ExperimentResult, *, approver: str, confirmation: str) -> None:
-    """Second approval: send all traffic to the winner once the flag name is typed back.
+def _rollout_problems(
+    rollout: RolloutPlan,
+    approval: ApprovalRecord | None,
+    audit: AuditLog,
+    *,
+    runner: ToolRunner | None,
+    allow_production: bool,
+) -> list[str]:
+    """Reasons the rollout may not run (empty when it may)."""
+    problems = []
+    if rollout.environment != SAFE_ENVIRONMENT and not allow_production:
+        problems.append(f"Rollouts in {rollout.environment!r} need ALLOW_PRODUCTION=1.")
+    if not audit.has_live_run(rollout.flag_name):
+        problems.append("Only experiments FlagPilot made live in Flagsmith can be rolled out.")
+    if audit.rollout_of(rollout.flag_name) is not None:
+        problems.append(f"{rollout.flag_name} was already rolled out.")
+    problems += check_approval(model_hash(rollout), approval)
+    if approval is not None and not problems and not audit.has_approval(approval):
+        problems.append("The rollout approval is not in the audit log. Approve it again.")
+    if runner is None:
+        problems.append("No Flagsmith connection was provided.")
+    return problems
 
-    The confirmation rules are enforced here; the Flagsmith write itself needs the
-    MCP client (pending decision on which weights to change), so it is refused.
+
+def roll_out_winner(
+    rollout: RolloutPlan,
+    approval: ApprovalRecord | None,
+    *,
+    runner: ToolRunner | None,
+    audit: AuditLog,
+    project_id: int,
+    environment_api_key: str,
+    allow_production: bool = False,
+    on_call: Callable[[PlannedCall, CallOutcome], None] | None = None,
+) -> ExecutionResult:
+    """Second approval executed: winner to 100%, the other variants recorded as stale.
+
+    Needs an approval of exactly this ``rollout`` (hash checked, present in the audit
+    log). Every Flagsmith read and write is logged; see :mod:`agent.rollout`.
     """
-    if result.verdict != "winner" or result.winner is None:
-        raise ExecutionError("There is no significant winner to roll out yet.")
-    if not approver.strip():
-        raise ExecutionError("Enter your name to approve the rollout.")
-    if confirmation.strip() != result.flag_name:
-        raise ExecutionError(f'Type the flag name "{result.flag_name}" exactly to confirm.')
-    raise ExecutionError(
-        "Rolling out a winner is not connected to Flagsmith yet, so nothing was changed."
+    current_hash = model_hash(rollout)
+    problems = _rollout_problems(
+        rollout, approval, audit, runner=runner, allow_production=allow_production
+    )
+    if problems:
+        audit.record(
+            "refused",
+            flag_name=rollout.flag_name,
+            plan_hash=current_hash,
+            error="; ".join(problems),
+        )
+        raise ExecutionError("FlagPilot did not roll out: " + " ".join(problems))
+
+    assert approval is not None and runner is not None  # checked above
+    context = {
+        "flag_name": rollout.flag_name,
+        "plan_hash": current_hash,
+        "approver": approval.approver,
+    }
+    outcomes: list[CallOutcome] = []
+
+    def call(tool: str, arguments: dict[str, Any], summary: str) -> Any:
+        planned = PlannedCall(tool=tool, arguments=arguments, summary=[summary])
+        audit.record("call", tool=tool, arguments=arguments, **context)
+        outcome = _run_call(planned, runner, audit, context)
+        outcomes.append(outcome)
+        if on_call:
+            on_call(planned, outcome)
+        return outcome.result
+
+    try:
+        environment = find_environment(
+            call("list_project_environments", {"id": project_id}, "Find the environment"),
+            environment_api_key,
+        )
+        if environment.uses_v2_versioning:
+            raise RolloutError(
+                f'Environment "{environment.name}" uses v2 feature versioning, which FlagPilot '
+                "does not support yet. Nothing was changed."
+            )
+        state = find_feature_state(
+            call(
+                "list_project_features",
+                {
+                    "project_pk": project_id,
+                    "environment": environment.id,
+                    "search": rollout.flag_name,
+                },
+                f'Find "{rollout.flag_name}" in {environment.name}',
+            ),
+            rollout.flag_name,
+        )
+        ids = option_ids(
+            call(
+                "list_feature_multivariate_options",
+                {"feature_pk": state.feature_id, "project_pk": str(project_id)},
+                "Read the variant options",
+            )
+        )
+        call(
+            "update_environment_feature_state",
+            {
+                "environment_api_key": environment_api_key,
+                "id__path": state.feature_state_id,
+                "feature": state.feature_id,
+                "multivariate_feature_state_values": rollout_allocations(rollout, ids),
+            },
+            f'Send 100% of identities to "{rollout.winner}"',
+        )
+    except RolloutError as error:
+        audit.record("error", error=error.friendly, **context)
+        raise ExecutionError(error.friendly, detail=error.detail) from error
+
+    audit.record(
+        "rolled_out",
+        arguments={"winner": rollout.winner, "stale_variants": rollout.stale_variants},
+        **context,
+    )
+    return ExecutionResult(
+        flag_name=rollout.flag_name, plan_hash=current_hash, dry_run=False, outcomes=outcomes
     )
