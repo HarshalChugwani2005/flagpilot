@@ -123,10 +123,15 @@ class PlannerOutput(
     """What the planner LLM returns: either a full plan or clarifying questions."""
 
 
-def plan_hash(plan: ExperimentPlan) -> str:
-    """SHA-256 of the plan's canonical JSON; any edit to the plan changes it."""
-    canonical = json.dumps(plan.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+def model_hash(model: BaseModel) -> str:
+    """SHA-256 of a model's canonical JSON; any change to the model changes it."""
+    canonical = json.dumps(model.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def plan_hash(plan: ExperimentPlan) -> str:
+    """Hash an experiment plan; any edit to the plan changes it."""
+    return model_hash(plan)
 
 
 def utc_now() -> datetime:
@@ -219,6 +224,7 @@ class ExperimentResult(BaseModel):
     best_treatment: str
     p_value: float
     alpha: float = Field(description="Significance level after Bonferroni correction.")
+    absolute_lift: float = Field(description="Best treatment rate minus control rate.")
     relative_lift: float | None = Field(description="Best treatment vs control; None if 0%.")
     min_sample_size: int
     verdict: Verdict
@@ -235,7 +241,28 @@ class ExperimentResult(BaseModel):
         return sum(variant.conversions for variant in self.variants)
 
 
-AuditEvent = Literal["planned", "approved", "rejected", "refused", "call", "result", "error"]
+class RolloutPlan(BaseModel):
+    """What the second approval covers: the winner gets 100%, the others become stale."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    flag_name: str = Field(pattern=FLAG_NAME_PATTERN)
+    control: str = Field(min_length=1)
+    winner: str = Field(min_length=1)
+    stale_variants: list[str] = Field(min_length=1)
+    environment: Literal["development", "production"]
+
+    @model_validator(mode="after")
+    def winner_is_not_stale(self) -> Self:
+        """Reject a winner that is also listed as stale."""
+        if self.winner in self.stale_variants:
+            raise ValueError("the winner cannot also be stale")
+        return self
+
+
+AuditEvent = Literal[
+    "planned", "approved", "rejected", "refused", "call", "result", "error", "rolled_out"
+]
 
 
 class AuditEntry(BaseModel):

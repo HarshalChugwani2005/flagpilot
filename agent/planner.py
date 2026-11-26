@@ -5,7 +5,7 @@ from pathlib import Path
 
 from agent.errors import FlagPilotError
 from agent.llm import PLANNING_TEMPERATURE, LLMClient, get_llm
-from agent.models import ClarifyingQuestions, ExperimentPlan, PlannerOutput
+from agent.models import SAFE_ENVIRONMENT, ClarifyingQuestions, ExperimentPlan, PlannerOutput
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "planner.md"
 FLAGS_PLACEHOLDER = "{{existing_flags}}"
@@ -46,4 +46,17 @@ def plan_experiment(
         temperature=PLANNING_TEMPERATURE,
         context={"existing_flag_names": list(existing_flag_names)},
     )
-    return output.root
+    result = output.root
+    return keep_in_development(result) if isinstance(result, ExperimentPlan) else result
+
+
+def keep_in_development(plan: ExperimentPlan) -> ExperimentPlan:
+    """Never let the LLM propose a non-development environment; record the change in risks."""
+    if plan.environment == SAFE_ENVIRONMENT:
+        return plan
+    note = (
+        f"Requested environment {plan.environment!r} was changed to {SAFE_ENVIRONMENT!r}: "
+        "FlagPilot plans experiments in development; production needs ALLOW_PRODUCTION=1 "
+        "and a separate approval."
+    )
+    return plan.model_copy(update={"environment": SAFE_ENVIRONMENT, "risks": [*plan.risks, note]})

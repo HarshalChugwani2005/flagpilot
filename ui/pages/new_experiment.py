@@ -312,9 +312,10 @@ def render_review(plan: ExperimentPlan, settings: Settings, audit: AuditLog) -> 
     render_changes(plan, settings)
     safe = render_safety(plan, settings, audit)
     execution = st.session_state.execution
-    if execution is not None and execution.plan_hash == plan_hash(plan):
+    current = execution is not None and execution.plan_hash == plan_hash(plan)
+    if current:
         render_outcome(execution, settings)
-    else:
+    if not current or execution.dry_run:
         render_actions(plan, settings, audit, safe)
     render_technical_details(plan, settings)
 

@@ -28,8 +28,10 @@ from flagsmith.exceptions import FlagsmithClientError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from agent.audit import AuditLog  # noqa: E402
 from agent.config import load_settings  # noqa: E402
-from agent.errors import ConfigError, FlagPilotError  # noqa: E402
+from agent.errors import FlagPilotError  # noqa: E402
+from agent.experiments import demo_flag_name  # noqa: E402
 
 IDENTITY_PREFIX = "sim_"
 MAX_VISITORS = 2000
@@ -255,14 +257,14 @@ class _WarningCollector(logging.Handler):
         self.sink.append(record.getMessage())
 
 
-def parse_args(
-    argv: list[str] | None, default_visitors: int, default_flag: str
-) -> argparse.Namespace:
+def parse_args(argv: list[str] | None, default_visitors: int) -> argparse.Namespace:
     """Command-line options."""
     parser = argparse.ArgumentParser(description="Simulate visitors against a Flagsmith flag.")
     parser.add_argument("--rates", required=True, help="e.g. control=0.08,green_buy_now=0.11")
     parser.add_argument("--visitors", type=int, default=default_visitors)
-    parser.add_argument("--flag", default=default_flag, help=f"default: {default_flag}")
+    parser.add_argument(
+        "--flag", help="default: STORE_FLAG_NAME, else FlagPilot's latest live experiment"
+    )
     parser.add_argument("--event", default="purchase")
     parser.add_argument("--rps", type=float, default=DEFAULT_RPS, help="max requests/second")
     parser.add_argument("--seed", type=int, help="random seed for repeatable conversions")
@@ -273,13 +275,16 @@ def main(argv: list[str] | None = None) -> None:
     """Run the simulation from the command line."""
     try:
         settings = load_settings()
-        args = parse_args(argv, settings.sim_visitors, settings.store_flag_name)
+        args = parse_args(argv, settings.sim_visitors)
+        args.flag = args.flag or demo_flag_name(
+            settings.store_flag_name, AuditLog(settings.audit_log_path).entries()
+        )
         rates = parse_rates(args.rates)
         if not 1 <= args.visitors <= MAX_VISITORS:
             raise SimulationError(f"--visitors must be between 1 and {MAX_VISITORS}.")
         if args.rps <= 0:
             raise SimulationError("--rps must be positive.")
-    except (ConfigError, SimulationError) as error:
+    except FlagPilotError as error:
         sys.exit(error.friendly)
 
     run_id = uuid.uuid4().hex[:6]

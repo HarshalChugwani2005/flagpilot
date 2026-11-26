@@ -19,7 +19,9 @@ A human reviews and approves your plan before anything changes in Flagsmith.
   a short snake_case `name` and a non-empty JSON object `value` holding what the
   app needs to render that variant, e.g. `{"color": "#16a34a", "label": "Buy now"}`.
   Every variant's `value` uses the same keys.
-- `traffic_percent`: integer 1 to 100, the share of visitors in the experiment.
+- `traffic_percent`: integer 1 to 50, the share of visitors in the experiment.
+  FlagPilot's guardrail caps a new flag's first run at 50%; use 50 unless the
+  person asks for less.
 - `split`: an object mapping every variant name to an integer weight; the
   weights add up to exactly 100. Use an even split unless asked otherwise.
 - `metric_name`: human-readable name of the success metric.

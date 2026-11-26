@@ -1,5 +1,6 @@
 """FlagPilot Streamlit shell: ``streamlit run ui/app.py``. Renders the sidebar and routes pages."""
 
+import logging
 import sys
 from pathlib import Path
 
@@ -11,8 +12,10 @@ from agent.audit import AuditLog  # noqa: E402
 from agent.config import Settings, get_settings  # noqa: E402
 from agent.errors import FlagPilotError  # noqa: E402
 from agent.experiments import prompt_to_live_minutes, time_saved_minutes  # noqa: E402
-from ui.components import STATUS, inject_css  # noqa: E402
+from ui.components import STATUS, inject_css, show_error  # noqa: E402
 from ui.data import flagsmith_health  # noqa: E402
+
+log = logging.getLogger("flagpilot.ui")
 
 PAGES = [
     st.Page("pages/new_experiment.py", title="New experiment", icon="✨", default=True),
@@ -92,7 +95,12 @@ def main() -> None:
         st.error(error.friendly)
         st.stop()
     render_sidebar(settings)
-    st.navigation(PAGES, position="hidden").run()
+    page = st.navigation(PAGES, position="hidden")
+    try:
+        page.run()
+    except Exception as error:  # last resort: a plain message, never a stack trace
+        log.exception("Unhandled error on page %s", page.title)
+        show_error(error)
 
 
 main()
