@@ -1,10 +1,9 @@
+# No `base`: Streamlit follows the viewer's OS light/dark setting, and FlagPilot's CSS,
+# pills and charts adapt to both. Replace with the playbook's UI-design theme when available.
 [theme]
-base = "dark"
 primaryColor = "#7C5CFF"
-backgroundColor = "#0F1117"
-secondaryBackgroundColor = "#1A1D29"
-textColor = "#E6E8F0"
 font = "sans serif"
+baseRadius = "medium"
 
 [server]
 headless = true
@@ -12,3 +11,6 @@ runOnSave = true
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
