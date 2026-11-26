@@ -1,8 +1,49 @@
-"""Turns a plain-English request into a structured :class:`ExperimentPlan`."""
+"""Turns a plain-English request into an :class:`ExperimentPlan` or clarifying questions."""
 
-from agent.models import ExperimentPlan
+from collections.abc import Collection
+from pathlib import Path
+
+from agent.errors import FlagPilotError
+from agent.llm import PLANNING_TEMPERATURE, LLMClient, get_llm
+from agent.models import ClarifyingQuestions, ExperimentPlan, PlannerOutput
+
+PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "planner.md"
+FLAGS_PLACEHOLDER = "{{existing_flags}}"
 
 
-def plan_experiment(request: str) -> ExperimentPlan:
-    """Build an experiment plan for ``request`` using the prompt in ``prompts/planner.md``."""
-    raise NotImplementedError("agent.planner.plan_experiment is implemented in a later step.")
+class PlanningError(FlagPilotError):
+    """The request could not be turned into a plan."""
+
+
+def build_system_prompt(existing_flag_names: Collection[str], path: Path = PROMPT_PATH) -> str:
+    """Render ``prompts/planner.md`` with the project's existing flag names.
+
+    The JSON schema itself is appended by :meth:`LLMClient.complete_json`.
+    """
+    try:
+        template = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise PlanningError(f"The planner prompt is missing ({path}).") from error
+    names = sorted(existing_flag_names)
+    flags = "\n".join(f"- {name}" for name in names) if names else "(none yet)"
+    return template.replace(FLAGS_PLACEHOLDER, flags)
+
+
+def plan_experiment(
+    request: str,
+    existing_flag_names: Collection[str],
+    *,
+    llm: LLMClient | None = None,
+) -> ExperimentPlan | ClarifyingQuestions:
+    """Plan an experiment for ``request``, avoiding ``existing_flag_names`` from Flagsmith."""
+    text = request.strip()
+    if not text:
+        raise PlanningError("Describe the experiment you want to run, in a sentence or two.")
+    output = (llm or get_llm()).complete_json(
+        build_system_prompt(existing_flag_names),
+        text,
+        PlannerOutput,
+        temperature=PLANNING_TEMPERATURE,
+        context={"existing_flag_names": list(existing_flag_names)},
+    )
+    return output.root
