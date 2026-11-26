@@ -1,15 +1,18 @@
 # FlagPilot tasks. Run `make install` once after cloning.
 
+# The venv must be built with Python 3.11: mixing interpreters breaks compiled packages.
 ifeq ($(OS),Windows_NT)
 PYTHON := ".venv/Scripts/python.exe"
+BOOTSTRAP ?= py -3.11
 else
 PYTHON := .venv/bin/python
+BOOTSTRAP ?= python3.11
 endif
 
 .PHONY: install run-ui run-store sim seed reset test test-integration lint
 
 install:
-	python -m venv .venv
+	$(BOOTSTRAP) -m venv --clear .venv
 	$(PYTHON) -m pip install -r requirements.txt
 
 run-ui:
