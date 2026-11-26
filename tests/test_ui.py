@@ -15,6 +15,7 @@ from agent.audit import AuditLog
 from agent.config import Settings
 from agent.flagsmith_client import FlagsmithClient, FlagsmithError
 from agent.models import ClarifyingQuestions, VariantCounts
+from agent.timing import ExperimentTiming, record_timing
 from tests.conftest import FakeRunner, make_plan
 
 UI = Path(__file__).resolve().parents[1] / "ui"
@@ -76,8 +77,9 @@ def test_approve_and_apply_runs_every_call(runner: FakeRunner, settings: Setting
 
     assert not app.exception
     assert [name for name, _ in runner.calls] == ["create_feature"]
-    assert events(settings) == ["planned", "approved", "call", "result"]
+    assert events(settings) == ["planned", "approved", "call", "result", "timed"]
     assert any("created in Flagsmith" in item.value for item in app.success)
+    assert any("FlagPilot:" in item.value and "your review:" in item.value for item in app.caption)
 
 
 def test_dry_run_changes_nothing(runner: FakeRunner, settings: Settings) -> None:
@@ -251,4 +253,21 @@ def test_apply_for_real_after_a_dry_run(runner: FakeRunner, settings: Settings) 
 
     assert not app.exception
     assert [name for name, _ in runner.calls] == ["create_feature"]
-    assert events(settings)[-2:] == ["call", "result"]
+    assert events(settings)[-3:] == ["call", "result", "timed"]
+    assert events(settings).count("timed") == 1  # the dry run was not timed
+
+
+def test_sidebar_compares_with_the_manual_baseline(runner: FakeRunner, settings: Settings) -> None:
+    settings.manual_baseline_minutes = 10
+    record_timing(
+        AuditLog(settings.audit_log_path),
+        make_plan(),
+        ExperimentTiming(planning_seconds=30, review_seconds=75, apply_seconds=8),
+    )
+    app = AppTest.from_file(str(UI / "app.py"), default_timeout=TIMEOUT).run()
+
+    [metric] = [m for m in app.sidebar.metric if m.label == "Time saved"]
+    assert metric.value == "9 min 22 s"
+    captions = " ".join(item.value for item in app.sidebar.caption)
+    assert "By hand: 10 min 00 s" in captions and "FlagPilot: 38 s" in captions
+    assert "your review: 1 min 15 s" in captions

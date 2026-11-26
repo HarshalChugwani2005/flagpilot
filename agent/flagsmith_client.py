@@ -9,6 +9,7 @@ is read once at startup. Only :mod:`agent.executor` may call write tools.
 
 import argparse
 import asyncio
+import atexit
 import json
 import logging
 import sys
@@ -27,6 +28,7 @@ from agent.models import VariantCounts
 
 STARTUP_TIMEOUT_SECONDS = 240  # first run clones the server from GitHub
 CALL_TIMEOUT_SECONDS = 60
+CLOSE_TIMEOUT_SECONDS = 10
 PAGE_SIZE = 100
 
 
@@ -43,9 +45,10 @@ class _IgnoreServerLogLines(logging.Filter):
 
 
 logging.getLogger("mcp.client.stdio").addFilter(_IgnoreServerLogLines())
+log = logging.getLogger(__name__)
 
 
-def _results(response: Any) -> list[dict[str, Any]]:
+def results_of(response: Any) -> list[dict[str, Any]]:
     """Items of a Flagsmith list response (plain list or paginated ``{"results": [...]}``)."""
     items = response.get("results") if isinstance(response, dict) else response
     if not isinstance(items, list):
@@ -92,7 +95,7 @@ class MCPSession:
             target=self._loop.run_forever, name="flagsmith-mcp", daemon=True
         )
         self._thread.start()
-        asyncio.run_coroutine_threadsafe(self._serve(params), self._loop)
+        self._served = asyncio.run_coroutine_threadsafe(self._serve(params), self._loop)
         if not self._ready.wait(STARTUP_TIMEOUT_SECONDS):
             raise FlagsmithError("The Flagsmith MCP server did not start in time.")
         if self._startup_error is not None:
@@ -129,9 +132,14 @@ class MCPSession:
         return self._run(self._session.call_tool(name, arguments), CALL_TIMEOUT_SECONDS)
 
     def close(self) -> None:
-        """Stop the server and the background loop."""
-        if self._stop is not None:
+        """Shut the session (and the server process) down cleanly, then stop the loop."""
+        if self._stop is not None and not self._served.done():
             self._loop.call_soon_threadsafe(self._stop.set)
+            try:
+                self._served.result(CLOSE_TIMEOUT_SECONDS)
+            except Exception:  # best effort at shutdown; the process is exiting anyway
+                log.warning("The Flagsmith MCP server did not shut down cleanly.")
+        self._session = None
         self._loop.call_soon_threadsafe(self._loop.stop)
 
 
@@ -174,6 +182,7 @@ def shared_session(settings: Settings) -> MCPSession:
     with _shared_lock:
         if _shared is None:
             _shared = MCPSession(server_parameters(settings))
+            atexit.register(_shared.close)
         return _shared
 
 
@@ -201,16 +210,27 @@ class FlagsmithClient:
     def list_projects(self) -> list[dict[str, Any]]:  # path: MCP
         """Every project the API key can see, with its organisation name."""
         projects = []
-        for organisation in _results(self.call_tool("list_organizations", {})):
-            for project in _results(
+        for organisation in results_of(self.call_tool("list_organizations", {})):
+            for project in results_of(
                 self.call_tool("list_projects_in_organization", {"id": organisation["id"]})
             ):
                 projects.append({**project, "organisation": organisation.get("name")})
         return projects
 
+    def get_project(self) -> dict[str, Any]:  # path: MCP
+        """Details of the configured project (FLAGSMITH_PROJECT_ID)."""
+        project = self.call_tool("get_project", {"id": self._settings.flagsmith_project_id})
+        if not isinstance(project, dict):
+            raise FlagsmithError("Flagsmith returned unexpected project details.")
+        return project
+
     def list_flag_names(self) -> list[str]:  # path: MCP
         """Names of every flag in the configured project (all pages)."""
-        names: list[str] = []
+        return [flag["name"] for flag in self.list_flags()]
+
+    def list_flags(self) -> list[dict[str, Any]]:  # path: MCP
+        """``{"id", "name"}`` of every flag in the configured project (all pages)."""
+        flags: list[dict[str, Any]] = []
         page = 1
         while True:
             response = self.call_tool(
@@ -221,9 +241,13 @@ class FlagsmithClient:
                     "page_size": PAGE_SIZE,
                 },
             )
-            names += [item["name"] for item in _results(response) if "name" in item]
+            flags += [
+                {"id": item["id"], "name": item["name"]}
+                for item in results_of(response)
+                if "id" in item and "name" in item
+            ]
             if not (isinstance(response, dict) and response.get("next")):
-                return names
+                return flags
             page += 1
 
     def get_variant_counts(self, flag_name: str, metric_event: str) -> dict[str, VariantCounts]:

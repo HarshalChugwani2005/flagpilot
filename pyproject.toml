@@ -3,6 +3,9 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: real Flagsmith + NVIDIA NIM calls; skipped when the keys are missing",
+]
 
 [tool.ruff]
 line-length = 100

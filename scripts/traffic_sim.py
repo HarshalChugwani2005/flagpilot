@@ -37,7 +37,7 @@ IDENTITY_PREFIX = "sim_"
 MAX_VISITORS = 2000
 DEFAULT_RPS = 5.0
 MAX_CONSECUTIVE_FAILURES = 5
-NO_VARIANT = "(no variant)"
+DEFAULT_CONTROL = "control"
 EVENT_METADATA = {"source": "flagpilot_traffic_sim"}
 
 
@@ -134,6 +134,7 @@ class SimulationReport:
     flag_name: str
     event: str
     rates: dict[str, float]
+    control: str = DEFAULT_CONTROL
     tallies: dict[str, VariantTally] = field(default_factory=dict)
     failures: int = 0
     first_error: str | None = None
@@ -159,7 +160,8 @@ def simulate_visitor(
         raise SimulationError(
             f'Flag "{report.flag_name}" was not found in this Flagsmith environment.'
         )
-    variant = getattr(flag, "variant", None) or NO_VARIANT
+    # Identities served the flag's base value carry no variant key: they saw the control.
+    variant = getattr(flag, "variant", None) or report.control
     experiment = getattr(flag, "experiment", None)
     tally = report.tallies.setdefault(variant, VariantTally())
     tally.visitors += 1
@@ -266,6 +268,11 @@ def parse_args(argv: list[str] | None, default_visitors: int) -> argparse.Namesp
         "--flag", help="default: STORE_FLAG_NAME, else FlagPilot's latest live experiment"
     )
     parser.add_argument("--event", default="purchase")
+    parser.add_argument(
+        "--control",
+        default=DEFAULT_CONTROL,
+        help="name for identities served the base value (no variant key)",
+    )
     parser.add_argument("--rps", type=float, default=DEFAULT_RPS, help="max requests/second")
     parser.add_argument("--seed", type=int, help="random seed for repeatable conversions")
     return parser.parse_args(argv)
@@ -288,7 +295,9 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(error.friendly)
 
     run_id = uuid.uuid4().hex[:6]
-    report = SimulationReport(flag_name=args.flag, event=args.event, rates=rates)
+    report = SimulationReport(
+        flag_name=args.flag, event=args.event, rates=rates, control=args.control
+    )
     logging.getLogger("flagsmith").addHandler(_WarningCollector(report.sdk_warnings))
     print(
         f"Simulating {args.visitors} visitors (identities {IDENTITY_PREFIX}{run_id}_*) "

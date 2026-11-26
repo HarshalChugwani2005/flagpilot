@@ -3,10 +3,11 @@
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from agent.admin_api import DELETE_FEATURE
 from agent.audit import AuditLog
 from agent.changes import build_changes
 from agent.errors import FlagPilotError
-from agent.guardrails import check_approval, validate_plan
+from agent.guardrails import FLAG_PREFIX, check_approval, validate_plan
 from agent.models import (
     SAFE_ENVIRONMENT,
     ApprovalRecord,
@@ -14,6 +15,7 @@ from agent.models import (
     ExecutionResult,
     ExperimentPlan,
     PlannedCall,
+    ResetPlan,
     RolloutPlan,
     model_hash,
     plan_hash,
@@ -235,4 +237,48 @@ def roll_out_winner(
     )
     return ExecutionResult(
         flag_name=rollout.flag_name, plan_hash=current_hash, dry_run=False, outcomes=outcomes
+    )
+
+
+def delete_demo_flags(
+    reset: ResetPlan,
+    approval: ApprovalRecord | None,
+    *,
+    runner: ToolRunner,
+    audit: AuditLog,
+    on_call: Callable[[PlannedCall, CallOutcome], None] | None = None,
+) -> ExecutionResult:
+    """Delete the demo project's ``fp_`` flags listed in ``reset`` (``make reset`` only).
+
+    Needs an approval of exactly this ``reset``. Refuses any flag without the ``fp_``
+    prefix, so flags FlagPilot did not create are never touched. Every call is logged.
+    """
+    current_hash = model_hash(reset)
+    problems = check_approval(current_hash, approval)
+    if approval is not None and not problems and not audit.has_approval(approval):
+        problems.append("The reset approval is not in the audit log.")
+    outsiders = [flag.name for flag in reset.flags if not flag.name.startswith(FLAG_PREFIX)]
+    if outsiders:
+        problems.append(f"Refusing to delete flags FlagPilot did not create: {outsiders}.")
+    scope = f"project {reset.project_id}"
+    if problems:
+        audit.record("refused", flag_name=scope, plan_hash=current_hash, error="; ".join(problems))
+        raise ExecutionError("FlagPilot did not reset the demo: " + " ".join(problems))
+
+    assert approval is not None  # checked above
+    outcomes = []
+    for flag in reset.flags:
+        context = {"flag_name": flag.name, "plan_hash": current_hash, "approver": approval.approver}
+        call = PlannedCall(
+            tool=DELETE_FEATURE,
+            arguments={"project_pk": reset.project_id, "id": flag.id},
+            summary=[f'Delete flag "{flag.name}" (id {flag.id})'],
+        )
+        audit.record("call", tool=call.tool, arguments=call.arguments, **context)
+        outcome = _run_call(call, runner, audit, context)
+        outcomes.append(outcome)
+        if on_call:
+            on_call(call, outcome)
+    return ExecutionResult(
+        flag_name=scope, plan_hash=current_hash, dry_run=False, outcomes=outcomes
     )

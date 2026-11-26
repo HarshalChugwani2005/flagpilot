@@ -4,14 +4,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from agent.approval import approve, record_plan
+from agent.approval import approve
 from agent.audit import AuditLog, audit_rows
 from agent.errors import ConfigError
 from agent.experiments import (
     demo_flag_name,
     list_experiments,
-    prompt_to_live_minutes,
-    time_saved_minutes,
 )
 from tests.conftest import make_plan
 
@@ -45,20 +43,6 @@ def test_dry_runs_do_not_make_an_experiment_live(audit: AuditLog) -> None:
     audit.record("result", flag_name=plan.flag_name, dry_run=True)
 
     assert list_experiments(audit.entries())[0].status == "Draft"
-
-
-def test_time_saved_uses_measured_prompt_to_live_minutes(tmp_path) -> None:
-    audit = AuditLog(
-        tmp_path / "log.jsonl",
-        clock=clock_from([START, START + timedelta(minutes=4)]),
-    )
-    plan = make_plan()
-    record_plan(plan, audit)
-    audit.record("result", flag_name=plan.flag_name)
-
-    assert prompt_to_live_minutes(audit.entries()) == [pytest.approx(4.0)]
-    assert time_saved_minutes(audit.entries(), manual_baseline=30) == pytest.approx(26.0)
-    assert time_saved_minutes(audit.entries(), manual_baseline=2) == 0
 
 
 def test_audit_rows_are_readable(audit: AuditLog) -> None:

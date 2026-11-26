@@ -6,7 +6,7 @@ else
 PYTHON := .venv/bin/python
 endif
 
-.PHONY: install run-ui run-store sim seed reset test lint
+.PHONY: install run-ui run-store sim seed reset test test-integration lint
 
 install:
 	python -m venv .venv
@@ -28,8 +28,11 @@ reset:
 	$(PYTHON) scripts/reset_demo.py
 
 test:
-	$(PYTHON) -m pytest -q
+	$(PYTHON) -m pytest -q -m "not integration"
 	node --test tests/test_demo_store.mjs
+
+test-integration:
+	$(PYTHON) -m pytest -v -m integration
 
 lint:
 	$(PYTHON) -m ruff check .

@@ -108,6 +108,19 @@ class ResponseCache:
         (self.directory / f"{key}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
+def cached_replies(directory: Path) -> list[Path]:
+    """Return the cached reply files in ``directory`` (empty if it does not exist)."""
+    return sorted(directory.glob("*.json")) if directory.is_dir() else []
+
+
+def clear_cache(directory: Path) -> int:
+    """Delete every cached reply in ``directory``; return how many were removed."""
+    files = cached_replies(directory)
+    for path in files:
+        path.unlink()
+    return len(files)
+
+
 class LLMClient:
     """NVIDIA NIM chat client with JSON validation, retries and optional caching."""
 

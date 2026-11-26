@@ -1,6 +1,7 @@
 """New experiment: prompt -> plan (or questions) -> review -> Approve / Edit / Reject -> apply."""
 
 import json
+import time
 
 import streamlit as st
 
@@ -14,6 +15,7 @@ from agent.flagsmith_client import FlagsmithClient
 from agent.guardrails import evaluate
 from agent.models import ExecutionResult, ExperimentPlan, plan_hash
 from agent.planner import plan_experiment
+from agent.timing import ExperimentTiming, format_duration, record_timing
 from ui.components import button_preview, guardrail_pills, show_error, split_chart
 from ui.plan_form import FormError, VariantFields, plan_from_form
 
@@ -42,6 +44,11 @@ def reset_review() -> None:
         st.session_state[key] = value
 
 
+def start_timer() -> None:
+    """Start timing a new experiment from zero (on a fresh "Plan experiment" click)."""
+    st.session_state.timer = {"planning_seconds": 0.0, "plan_shown_at": None}
+
+
 def use_example(text: str) -> None:
     """Fill the request box with an example prompt."""
     st.session_state.request = text
@@ -51,7 +58,13 @@ def use_example(text: str) -> None:
 
 
 def run_planning(request: str, settings: Settings, audit: AuditLog) -> None:
-    """Plan with live progress steps; store a plan or clarifying questions."""
+    """Plan with live progress steps; store a plan or clarifying questions.
+
+    The run's duration is added to the experiment's planning time, so a round of
+    clarifying questions counts the planner's time but not the user's answering time.
+    """
+    timer = st.session_state.setdefault("timer", {"planning_seconds": 0.0, "plan_shown_at": None})
+    started = time.monotonic()
     with st.status("Planning your experiment…", expanded=True) as status:
         try:
             status.write("Reading existing flags from Flagsmith…")
@@ -62,13 +75,16 @@ def run_planning(request: str, settings: Settings, audit: AuditLog) -> None:
                 status.write("Checking guardrails…")
                 record_plan(result, audit)
         except FlagPilotError as error:
+            timer["planning_seconds"] += time.monotonic() - started
             status.update(label="Planning failed", state="error", expanded=False)
             show_error(error)
             return
+        timer["planning_seconds"] += time.monotonic() - started
         reset_review()
         st.session_state.existing_flags = existing
         if isinstance(result, ExperimentPlan):
             st.session_state.plan = result
+            timer["plan_shown_at"] = time.monotonic()
             status.update(label="Plan ready for review", state="complete", expanded=False)
         else:
             st.session_state.questions = result.questions
@@ -216,6 +232,7 @@ def edit_dialog(plan: ExperimentPlan) -> None:
 def apply_plan(plan: ExperimentPlan, settings: Settings, audit: AuditLog, *, dry_run: bool) -> None:
     """Record the approval, then run each Flagsmith call with live progress."""
     reviewer = st.session_state.get("reviewer", "")
+    clicked = time.monotonic()
     label = "Dry run: logging the Flagsmith calls…" if dry_run else "Applying in Flagsmith…"
     with st.status(label, expanded=True) as status:
         try:
@@ -239,9 +256,30 @@ def apply_plan(plan: ExperimentPlan, settings: Settings, audit: AuditLog, *, dry
             show_error(error)
             return
         status.update(label="All changes logged", state="complete", expanded=False)
+    if not dry_run:
+        record_live_timing(plan, audit, clicked)
     st.session_state.execution = result
     st.toast("Dry run logged" if dry_run else f"{plan.flag_name} is live in Flagsmith", icon="✅")
     render_outcome(result, settings)
+
+
+def record_live_timing(plan: ExperimentPlan, audit: AuditLog, approve_clicked: float) -> None:
+    """Store planning, review and apply seconds once the experiment is live.
+
+    Nothing is recorded if the timer was lost (e.g. the page was reloaded mid-review),
+    rather than guessing a number.
+    """
+    timer = st.session_state.pop("timer", None)
+    if not timer or timer.get("plan_shown_at") is None:
+        st.session_state.last_timing = None
+        return
+    timing = ExperimentTiming(
+        planning_seconds=timer["planning_seconds"],
+        review_seconds=approve_clicked - timer["plan_shown_at"],
+        apply_seconds=time.monotonic() - approve_clicked,
+    )
+    record_timing(audit, plan, timing)
+    st.session_state.last_timing = timing
 
 
 def render_outcome(result: ExecutionResult, settings: Settings) -> None:
@@ -252,6 +290,14 @@ def render_outcome(result: ExecutionResult, settings: Settings) -> None:
         )
         return
     st.success(f"`{result.flag_name}` was created in Flagsmith.")
+    timing: ExperimentTiming | None = st.session_state.get("last_timing")
+    if timing is not None:
+        st.caption(
+            f"⏱ FlagPilot: {format_duration(timing.flagpilot_seconds)} "
+            f"(planning {format_duration(timing.planning_seconds)} + applying "
+            f"{format_duration(timing.apply_seconds)}) · your review: "
+            f"{format_duration(timing.review_seconds)}"
+        )
     st.link_button("Open in Flagsmith", settings.flagsmith_features_url())
 
 
@@ -351,6 +397,7 @@ def main() -> None:
             f"💡 {title}", on_click=use_example, args=(text,), width="stretch", key=f"ex_{title}"
         )
     if st.button("Plan experiment", type="primary", disabled=not request.strip(), key="plan_btn"):
+        start_timer()
         run_planning(request, settings, audit)
 
     if st.session_state.questions:

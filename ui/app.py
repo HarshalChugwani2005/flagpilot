@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agent.audit import AuditLog  # noqa: E402
 from agent.config import Settings, get_settings  # noqa: E402
 from agent.errors import FlagPilotError  # noqa: E402
-from agent.experiments import prompt_to_live_minutes, time_saved_minutes  # noqa: E402
+from agent.timing import format_duration, time_saved  # noqa: E402
 from ui.components import STATUS, inject_css, show_error  # noqa: E402
 from ui.data import flagsmith_health  # noqa: E402
 
@@ -23,12 +23,6 @@ PAGES = [
     st.Page("pages/results.py", title="Results", icon="📊"),
     st.Page("pages/audit_log.py", title="Audit log", icon="📜"),
 ]
-
-
-def format_minutes(minutes: float) -> str:
-    """``95`` -> ``"1 h 35 min"``; ``12.4`` -> ``"12 min"``."""
-    hours, rest = divmod(round(minutes), 60)
-    return f"{hours} h {rest} min" if hours else f"{rest} min"
 
 
 def render_connection(settings: Settings) -> None:
@@ -47,27 +41,35 @@ def render_connection(settings: Settings) -> None:
 
 
 def render_time_saved(settings: Settings) -> None:
-    """Time saved vs. the user's measured manual baseline, from audit-log timings."""
+    """Measured FlagPilot time vs. the user's timed manual setup; review time shown apart."""
     try:
         entries = AuditLog(settings.audit_log_path).entries()
     except FlagPilotError as error:
         st.caption(error.friendly)
         return
-    live = prompt_to_live_minutes(entries)
     if settings.manual_baseline_minutes is None:
         st.metric(
             "Time saved",
             "—",
-            help="Set MANUAL_BASELINE_MINUTES in .env to how long the same setup takes you "
-            "by hand. FlagPilot measures its own time from the audit log.",
+            help="Time yourself creating the same experiment in the Flagsmith dashboard, "
+            "then set MANUAL_BASELINE_MINUTES in .env.",
         )
         return
-    saved = time_saved_minutes(entries, settings.manual_baseline_minutes)
+    comparison = time_saved(entries, settings.manual_baseline_minutes)
+    if comparison is None:
+        st.metric("Time saved", "—", help="Appears after the first experiment goes live.")
+        return
     st.metric(
         "Time saved",
-        format_minutes(saved),
-        help=f"{len(live)} live experiment(s) vs. a measured manual setup of "
-        f"{format_minutes(settings.manual_baseline_minutes)} each.",
+        format_duration(comparison.total_saved_seconds),
+        help=f"Across {comparison.experiments} live experiment(s): your measured manual "
+        "setup minus FlagPilot's planning + applying time. Your review time is excluded.",
+    )
+    st.caption(
+        f"By hand: {format_duration(comparison.manual_seconds)} · "
+        f"FlagPilot: {format_duration(comparison.average_flagpilot_seconds)} · "
+        f"your review: {format_duration(comparison.average_review_seconds)}"
+        + (" (averages)" if comparison.experiments > 1 else "")
     )
 
 

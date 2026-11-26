@@ -56,7 +56,7 @@ def check_no_deletions(calls: list[PlannedCall]) -> GuardrailCheck:
         return GuardrailCheck(
             rule="No deletions",
             status="fail",
-            message=f"FlagPilot never deletes anything in Flagsmith ({', '.join(deleting)}).",
+            message=f"Experiment plans never delete anything in Flagsmith ({', '.join(deleting)}).",
         )
     return GuardrailCheck(rule="No deletions", status="pass", message="Nothing is deleted")
 

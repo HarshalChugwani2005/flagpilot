@@ -260,8 +260,36 @@ class RolloutPlan(BaseModel):
         return self
 
 
+class DemoFlag(BaseModel):
+    """A Flagsmith flag the demo reset will delete."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int
+    name: str = Field(min_length=1)
+
+
+class ResetPlan(BaseModel):
+    """What ``make reset`` will delete in Flagsmith; approved by typing the project name."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: int
+    project_name: str
+    flags: list[DemoFlag]
+
+
 AuditEvent = Literal[
-    "planned", "approved", "rejected", "refused", "call", "result", "error", "rolled_out"
+    "planned",
+    "approved",
+    "rejected",
+    "refused",
+    "call",
+    "result",
+    "error",
+    "rolled_out",
+    "reset",
+    "timed",
 ]
 
 

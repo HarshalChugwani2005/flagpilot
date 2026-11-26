@@ -29,8 +29,10 @@ Windows without Make: `winget install ezwinports.make`, then open a new terminal
 | `make run-ui` | Streamlit app on port 8501 |
 | `make run-store` | Demo store on <http://localhost:8000> (its `config.js` is generated from `.env`) |
 | `make sim ARGS="--rates control=0.08,green_buy_now=0.11"` | Simulate 500 visitors (`--visitors 2000` for the final demo only; 1 API request each) |
-| `make seed` / `make reset` | Prepare / clean up the Flagsmith demo project |
-| `make test` | Run the test suite |
+| `make seed` | Plan, approve (type the flag name) and create `fp_pricing_cta`, then simulate 1,500 visitors (~1,500 API requests) |
+| `make reset` | Delete the project's `fp_` flags, back up and clear `audit_log.jsonl`, clear `.llm_cache/` (shows every change, asks you to type the project name) |
+| `make test` | Unit tests (Flagsmith and the LLM mocked) plus the demo-store tests |
+| `make test-integration` | The real flow against Flagsmith and NVIDIA NIM: plan, approve, create an `fp_it_…` flag, read it back, delete it (skipped without keys) |
 
 ### Using the app
 
