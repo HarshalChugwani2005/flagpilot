@@ -3,13 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FlagPilot Demo Store</title>
+  <title>Trailhead Daypack · FlagPilot Demo Store</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f6f7f9; color: #111827; }
+    header { padding: 16px 32px; background: #fff; border-bottom: 1px solid #e5e7eb; font-weight: 700; }
+    main { max-width: 960px; margin: 48px auto; padding: 0 24px; display: grid;
+           grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+    .photo { aspect-ratio: 1; border-radius: 16px; background: linear-gradient(135deg, #fde68a, #f97316);
+             display: grid; place-items: center; font-size: 120px; }
+    h1 { margin: 0 0 8px; font-size: 32px; }
+    .price { font-size: 24px; font-weight: 600; margin: 0 0 16px; }
+    .desc { color: #4b5563; line-height: 1.6; margin: 0 0 24px; }
+    #checkout { border: 0; border-radius: 10px; padding: 14px 28px; font-size: 18px; font-weight: 600;
+                color: #fff; background: #6b7280; cursor: pointer; min-width: 200px; }
+    #checkout:disabled { opacity: .5; cursor: not-allowed; }
+    .badge { position: fixed; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 8px;
+             padding: 6px 10px; border-radius: 8px; background: #111827; color: #f9fafb;
+             font: 12px ui-monospace, Consolas, monospace; max-width: 70vw; }
+    .badge.error { background: #991b1b; }
+    .badge button { font: inherit; background: #374151; color: inherit; border: 0; border-radius: 4px;
+                    padding: 2px 6px; cursor: pointer; }
+    #badge-swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+    @media (max-width: 720px) { main { grid-template-columns: 1fr; margin-top: 24px; } }
+  </style>
 </head>
 <body>
-  <main id="store">
-    <h1>Demo Store</h1>
-    <p id="status">The Flagsmith JS SDK is connected in a later step.</p>
+  <header>Trailhead Outfitters</header>
+  <main>
+    <div class="photo" aria-hidden="true">🎒</div>
+    <section>
+      <h1>Trailhead Daypack</h1>
+      <p class="price">₹2,499</p>
+      <p class="desc">A 22-litre weatherproof daypack with a padded laptop sleeve,
+        breathable back panel and quick-access side pockets.</p>
+      <button id="checkout" type="button" disabled>Loading…</button>
+    </section>
   </main>
-  <script src="app.js"></script>
+  <aside class="badge" aria-live="polite">
+    <span id="badge-swatch" hidden></span>
+    <span id="badge-text">Loading variant…</span>
+    <button id="new-visitor" type="button" title="Forget this visitor id and reload">New visitor</button>
+  </aside>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
