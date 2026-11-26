@@ -27,7 +27,12 @@ def main() -> None:
     st.title("FlagPilot")
     st.caption("Plain-English A/B experiments on Flagsmith, with human approval at every step.")
     show_config_status()
-    st.info("The Plan, Results and Audit Log pages are wired to the agent in later steps.")
+    st.markdown(
+        "- **Plan**: describe an experiment, review the exact Flagsmith changes, then "
+        "approve, edit or reject them.\n"
+        "- **Audit Log**: every approval, rejection and Flagsmith call.\n"
+        "- **Results**: arrives with the reporter step."
+    )
 
 
 main()

@@ -1,8 +1,8 @@
-"""Pydantic v2 data models shared by the planner, guardrails, executor and reporter.
+"""Pydantic v2 data models shared by the planner, guardrails, executor and reporter."""
 
-Models other than the planner's are defined in the step that implements them.
-"""
-
+import hashlib
+import json
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -27,7 +27,7 @@ class Variant(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=40, pattern=EVENT_NAME_PATTERN)
     value: dict[str, Any] = Field(min_length=1)
 
 
@@ -47,26 +47,9 @@ class ExperimentPlan(BaseModel):
     split: dict[str, int] = Field(description="Variant name -> weight; weights sum to 100.")
     metric_name: str = Field(min_length=1)
     metric_event: str = Field(min_length=1, max_length=64, pattern=EVENT_NAME_PATTERN)
-    environment: Literal["development"] = SAFE_ENVIRONMENT
+    environment: Literal["development", "production"] = SAFE_ENVIRONMENT
     min_sample_size: int = Field(ge=1)
     risks: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def keep_environment_safe(cls, data: Any) -> Any:
-        """Downgrade any other environment to development and record why in ``risks``."""
-        if not isinstance(data, dict):
-            return data
-        requested = data.get("environment", SAFE_ENVIRONMENT)
-        if requested == SAFE_ENVIRONMENT:
-            return data
-        note = (
-            f"Requested environment {requested!r} was changed to {SAFE_ENVIRONMENT!r}: "
-            "FlagPilot only creates experiments in development."
-        )
-        risks = data.get("risks")
-        risks = [*risks, note] if isinstance(risks, list) else [note]
-        return {**data, "environment": SAFE_ENVIRONMENT, "risks": risks}
 
     @field_validator("flag_name")
     @classmethod
@@ -140,17 +123,81 @@ class PlannerOutput(
     """What the planner LLM returns: either a full plan or clarifying questions."""
 
 
+def plan_hash(plan: ExperimentPlan) -> str:
+    """SHA-256 of the plan's canonical JSON; any edit to the plan changes it."""
+    canonical = json.dumps(plan.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def utc_now() -> datetime:
+    """Return the current time as a timezone-aware UTC datetime."""
+    return datetime.now(UTC)
+
+
+class PlannedCall(BaseModel):
+    """One Flagsmith MCP tool call the executor will make, shown verbatim to the approver."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool: str = Field(min_length=1)
+    arguments: dict[str, Any]
+    summary: list[str] = Field(min_length=1, description="Human-readable lines for the diff.")
+
+
 class ApprovalRecord(BaseModel):
-    """A human approval of a specific plan or rollout, required before any Flagsmith write."""
+    """A human approval of one exact plan, required before any Flagsmith write."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    approver: str = Field(min_length=1, max_length=80)
+    approved_at: datetime
+    plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("approver", mode="before")
+    @classmethod
+    def approver_trimmed(cls, approver: Any) -> Any:
+        """Strip whitespace so a blank name fails the length check."""
+        return approver.strip() if isinstance(approver, str) else approver
+
+
+class CallOutcome(BaseModel):
+    """What happened to one planned call."""
+
+    tool: str
+    ok: bool
+    dry_run: bool
+    result: Any = None
+    error: str | None = None
 
 
 class ExecutionResult(BaseModel):
-    """What the executor changed in Flagsmith, and through which path (MCP or Admin API)."""
+    """What the executor did (or, in dry-run mode, would do) in Flagsmith."""
+
+    flag_name: str
+    plan_hash: str
+    dry_run: bool
+    outcomes: list[CallOutcome]
 
 
 class ExperimentResult(BaseModel):
     """Per-variant counts and the statistics computed in code (never by the LLM)."""
 
 
+AuditEvent = Literal["approved", "rejected", "refused", "call", "result", "error"]
+
+
 class AuditEntry(BaseModel):
-    """One line of ``audit_log.jsonl`` describing a Flagsmith write and its approval."""
+    """One line of ``audit_log.jsonl``: an approval decision or a Flagsmith call and its result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: datetime
+    event: AuditEvent
+    flag_name: str | None = None
+    plan_hash: str | None = None
+    approver: str | None = None
+    dry_run: bool = False
+    tool: str | None = None
+    arguments: dict[str, Any] | None = None
+    result: Any = None
+    error: str | None = None
