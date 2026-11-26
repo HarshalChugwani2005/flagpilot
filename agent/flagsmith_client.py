@@ -73,6 +73,9 @@ def parse_tool_result(result: Any) -> Any:
         raise FlagsmithError("Flagsmith rejected the request.", detail=text[:1000] or None)
     structured = getattr(result, "structured_content", None)
     if structured is not None:
+        # The server wraps non-object results (e.g. lists) as {"result": ...}.
+        if isinstance(structured, dict) and set(structured) == {"result"}:
+            return structured["result"]
         return structured
     try:
         return json.loads(text) if text else None

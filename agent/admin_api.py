@@ -1,9 +1,11 @@
 """Flagsmith Admin API (httpx), used only where the official MCP server lacks a tool.
 
-The MCP server offers no tool to delete a flag or to start an experiment, so:
+Used where the official MCP server cannot do the job:
 
-- ``DELETE /api/v1/projects/{project_pk}/features/{id}/`` (Flagsmith's published OpenAPI)
-- ``POST /api/v1/environments/{key}/experiments/{id}/start/`` (Flagsmith Experimentation docs)
+- ``DELETE /api/v1/projects/{project_pk}/features/{id}/`` (no delete tool; published OpenAPI)
+- ``POST /api/v1/environments/{key}/experiment-metrics/`` (the MCP ``create_metric`` tool
+  drops the required ``definition`` field; body from Flagsmith's Experimentation docs)
+- ``POST /api/v1/environments/{key}/experiments/{id}/start/`` (no start tool; docs)
 
 Both are authenticated with an Organisation (Master) API key.
 """
@@ -18,6 +20,7 @@ from agent.flagsmith_client import FlagsmithError
 TIMEOUT_SECONDS = 20
 DELETE_FEATURE = "admin_api.delete_feature"
 START_EXPERIMENT = "admin_api.start_experiment"
+CREATE_METRIC = "admin_api.create_metric"
 
 
 class AdminAPI:
@@ -35,11 +38,27 @@ class AdminAPI:
         """Run an Admin API operation by name (delete a flag, or start an experiment)."""
         if name == DELETE_FEATURE:
             return self.delete_feature(int(arguments["project_pk"]), int(arguments["id"]))
+        if name == CREATE_METRIC:
+            body = {key: value for key, value in arguments.items() if key != "environment_api_key"}
+            return self.create_metric(str(arguments["environment_api_key"]), body)
         if name == START_EXPERIMENT:
             return self.start_experiment(
                 str(arguments["environment_api_key"]), int(arguments["id"])
             )
         raise FlagsmithError(f"The Admin API fallback does not support {name!r}.")
+
+    def create_metric(self, environment_key: str, body: dict[str, Any]) -> dict[str, Any]:
+        # path: Admin API (the MCP create_metric tool drops the required "definition" field)
+        """Create an experiment metric from Flagsmith's documented body; returns it with its id."""
+        url = f"{self._base}/environments/{environment_key}/experiment-metrics/"
+        try:
+            response = self._client.request("POST", url, headers=self._headers, json=body)
+        except httpx.HTTPError as error:
+            raise FlagsmithError(
+                "Could not reach the Flagsmith Admin API.", detail=str(error)
+            ) from error
+        self._raise_for_status(response, f"create metric {body.get('name')!r}")
+        return response.json()
 
     def start_experiment(self, environment_key: str, experiment_id: int) -> dict[str, Any]:
         # path: Admin API (the MCP server cannot start experiments)

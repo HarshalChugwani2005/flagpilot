@@ -81,7 +81,7 @@ def test_approve_and_apply_runs_every_call(runner: FakeRunner, settings: Setting
     assert [name for name, _ in runner.calls] == [
         "create_feature",
         "list_feature_multivariate_options",
-        "create_metric",
+        "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",
     ]
@@ -190,7 +190,7 @@ def test_experiments_grid(runner: FakeRunner, settings: Settings, monkeypatch) -
 
 
 def test_results_winner(runner: FakeRunner, settings: Settings, monkeypatch) -> None:
-    go_live(settings, min_sample_size=100)
+    go_live(settings, min_sample_size=300)
     monkeypatch.setattr(
         FlagsmithClient,
         "get_variant_counts",
@@ -263,7 +263,7 @@ def test_apply_for_real_after_a_dry_run(runner: FakeRunner, settings: Settings) 
     assert [name for name, _ in runner.calls] == [
         "create_feature",
         "list_feature_multivariate_options",
-        "create_metric",
+        "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",
     ]

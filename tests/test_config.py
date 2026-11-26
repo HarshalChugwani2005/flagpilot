@@ -29,7 +29,7 @@ def test_loads_required_and_defaults(clean_env: pytest.MonkeyPatch) -> None:
 
     assert settings.flagsmith_project_id == 42
     assert settings.nvidia_api_key.get_secret_value() == "nvapi-test"
-    assert settings.llm_model == "meta/llama-3.3-70b-instruct"
+    assert settings.llm_model == "nvidia/nemotron-3.5-super-vl-120b-a12b"
     assert settings.sim_visitors == 500
     assert "nvapi-test" not in repr(settings)
 

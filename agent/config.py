@@ -20,9 +20,11 @@ class LLMSettings(BaseSettings):
     )
 
     nvidia_api_key: SecretStr = Field(min_length=1)
-    llm_model: str = Field(default="meta/llama-3.3-70b-instruct", min_length=1)
+    llm_model: str = Field(default="nvidia/nemotron-3.5-super-vl-120b-a12b", min_length=1)
     llm_base_url: HttpUrl = HttpUrl("https://integrate.api.nvidia.com/v1")
     llm_cache: bool = False
+    # Reasoning models spend tokens thinking before they answer, so leave headroom.
+    llm_max_tokens: int = Field(default=4096, ge=256)
     llm_cache_dir: Path = Path(".llm_cache")
 
 

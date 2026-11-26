@@ -15,6 +15,8 @@ from agent.models import ExperimentPlan, ExperimentResult, VariantCounts
 from agent.stats import analyse
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "reporter.md"
+STATS_PLACEHOLDER = "{stats_json}"
+SUMMARY_REQUEST = "Write the summary now."
 
 
 class ReportError(FlagPilotError):
@@ -34,20 +36,37 @@ def fetch_result(plan: ExperimentPlan, source: CountsSource) -> ExperimentResult
     return analyse(plan, source.get_variant_counts(plan.flag_name, plan.metric_event))
 
 
+def suggested_verdict(result: ExperimentResult) -> str:
+    """Return the prompt's one-line verdict, chosen in code from the computed verdict."""
+    if result.verdict != "winner" or result.winner is None:
+        return "No clear winner yet"
+    if result.winner == result.control:
+        return "Control is better"
+    return f"Variant {result.winner} is winning"
+
+
 def summary_payload(result: ExperimentResult) -> dict[str, Any]:
-    """Return the computed numbers (rounded in code) and labels the LLM may use; nothing else."""
+    """Return the computed numbers (rounded in code) and labels the LLM may use; nothing else.
+
+    ``reliable`` and ``more_users_needed`` are decided here, so the LLM never compares or
+    subtracts numbers. ``significance_threshold`` is the real cut-off (0.05, tightened
+    when several variants are compared with the control).
+    """
     return {
         "metric": result.metric_name,
+        "suggested_verdict": suggested_verdict(result),
         "verdict": result.verdict,
+        "reliable": result.verdict == "winner",
         "winner": result.winner,
         "control": result.control,
         "best_treatment": result.best_treatment,
         "variants": [
             {
                 "name": variant.name,
-                "visitors": variant.visitors,
+                "users": variant.visitors,
                 "conversions": variant.conversions,
                 "conversion_rate_percent": round(variant.rate * 100, 2),
+                "more_users_needed": max(0, result.min_sample_size - variant.visitors),
             }
             for variant in result.variants
         ],
@@ -57,15 +76,24 @@ def summary_payload(result: ExperimentResult) -> dict[str, Any]:
         ),
         "p_value": round(result.p_value, 4),
         "significance_threshold": round(result.alpha, 4),
-        "min_visitors_per_variant": result.min_sample_size,
+        "min_sample_size": result.min_sample_size,
     }
 
 
 def summarise(result: ExperimentResult, *, llm: LLMClient | None = None) -> str:
-    """Plain-English summary written by the LLM from :func:`summary_payload` only."""
+    """Plain-English summary written by the LLM from :func:`summary_payload` only.
+
+    The stats go into the prompt's ``{stats_json}`` placeholder (appended if absent).
+    """
     try:
-        system = PROMPT_PATH.read_text(encoding="utf-8")
+        template = PROMPT_PATH.read_text(encoding="utf-8")
     except OSError as error:
         raise ReportError(f"The reporter prompt is missing ({PROMPT_PATH}).") from error
-    payload = json.dumps(summary_payload(result), indent=2)
-    return (llm or get_llm()).complete_text(system, payload, temperature=REPORTING_TEMPERATURE)
+    stats = json.dumps(summary_payload(result), indent=2)
+    if STATS_PLACEHOLDER in template:
+        system = template.replace(STATS_PLACEHOLDER, stats)
+    else:
+        system = f"{template}\n\nStats: {stats}"
+    return (llm or get_llm()).complete_text(
+        system, SUMMARY_REQUEST, temperature=REPORTING_TEMPERATURE
+    )

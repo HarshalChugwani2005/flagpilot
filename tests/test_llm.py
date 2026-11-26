@@ -148,3 +148,12 @@ def test_corrupt_cache_file_is_reported(
     with caplog.at_level(logging.WARNING):
         assert make_llm(cache=True).complete_text("sys", "hi") == "second"
     assert any("unreadable LLM cache file" in record.message for record in caplog.records)
+
+
+def test_retired_model_is_explained(
+    make_llm: Callable[..., LLMClient], fake_chat: FakeChatClient
+) -> None:
+    fake_chat.queue(status_error(openai.APIStatusError, 410))
+
+    with pytest.raises(LLMError, match="retired the model in LLM_MODEL"):
+        make_llm().complete_text("sys", "hi")

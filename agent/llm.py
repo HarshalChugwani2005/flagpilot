@@ -27,7 +27,7 @@ T = TypeVar("T", bound=BaseModel)
 
 PLANNING_TEMPERATURE = 0.0
 REPORTING_TEMPERATURE = 0.3
-MAX_TOKENS = 1024
+SCHEMA_PLACEHOLDER = "{schema}"
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = 2.0
 
@@ -64,6 +64,11 @@ def _friendly_status_error(error: openai.APIStatusError) -> LLMError:
         message = "NVIDIA NIM rejected the API key. Check NVIDIA_API_KEY in .env (starts nvapi-)."
     elif status == 404:
         message = "NVIDIA NIM does not know that model. Check LLM_MODEL in .env."
+    elif status == 410:
+        message = (
+            "NVIDIA has retired the model in LLM_MODEL. Pick a current chat model on "
+            "build.nvidia.com (Free Endpoint) and put its id in LLM_MODEL in .env."
+        )
     elif status == 429:
         message = (
             "NVIDIA NIM is rate-limiting requests (free tier is about 40/minute). "
@@ -136,6 +141,7 @@ class LLMClient:
     ) -> None:
         """Create the client; ``client`` and ``sleep`` can be replaced in tests."""
         self.model = settings.llm_model
+        self.max_tokens = settings.llm_max_tokens
         self._client = client or openai.OpenAI(
             base_url=str(settings.llm_base_url),
             api_key=settings.nvidia_api_key.get_secret_value(),
@@ -169,12 +175,18 @@ class LLMClient:
     ) -> T:
         """Return a ``schema_model`` instance parsed from the model's JSON reply.
 
-        The schema is sent in the system prompt and as ``nvext.guided_json``. If the
-        reply fails validation (``context`` is passed to Pydantic), the model gets one
-        retry with the validation errors.
+        The schema is sent in the system prompt (at ``{schema}`` if the prompt has that
+        placeholder, otherwise appended) and as ``nvext.guided_json``. If the reply fails
+        validation (``context`` is passed to Pydantic), the model gets one retry with the
+        validation errors.
         """
         schema = schema_model.model_json_schema()
-        system_prompt = f"{system}\n\nOutput ONLY JSON matching this schema:\n{json.dumps(schema)}"
+        if SCHEMA_PLACEHOLDER in system:
+            system_prompt = system.replace(SCHEMA_PLACEHOLDER, json.dumps(schema))
+        else:
+            system_prompt = (
+                f"{system}\n\nOutput ONLY JSON matching this schema:\n{json.dumps(schema)}"
+            )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user},
@@ -269,7 +281,7 @@ class LLMClient:
                     model=self.model,
                     messages=messages,
                     temperature=temperature,
-                    max_tokens=MAX_TOKENS,
+                    max_tokens=self.max_tokens,
                     extra_body=extra_body,
                 )
                 break
@@ -290,8 +302,14 @@ class LLMClient:
                         detail=str(error),
                     ) from error
                 self._backoff(attempt, error)
-        content = response.choices[0].message.content if response.choices else None
+        choice = response.choices[0] if response.choices else None
+        content = choice.message.content if choice else None
         if not content:
+            if choice is not None and choice.finish_reason == "length":
+                raise LLMError(
+                    f"The model used all {self.max_tokens} tokens thinking and gave no answer. "
+                    "Raise LLM_MAX_TOKENS in .env."
+                )
             raise LLMError("NVIDIA NIM returned an empty reply. Please try again.")
         return content
 

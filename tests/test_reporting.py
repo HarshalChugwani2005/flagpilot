@@ -26,7 +26,7 @@ WIN_COUNTS = {
 
 
 def winning_result() -> ExperimentResult:
-    return analyse(make_plan(min_sample_size=100), WIN_COUNTS)
+    return analyse(make_plan(min_sample_size=300), WIN_COUNTS)
 
 
 # --- Reporter ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ class Counts:
 
 
 def test_fetch_result_computes_lifts_and_p_value() -> None:
-    result = fetch_result(make_plan(min_sample_size=100), Counts())
+    result = fetch_result(make_plan(min_sample_size=300), Counts())
 
     assert result.absolute_lift == pytest.approx(0.04)
     assert result.relative_lift == pytest.approx(0.4)
@@ -55,7 +55,9 @@ def test_payload_holds_only_rounded_computed_numbers() -> None:
     assert payload["variants"][1]["conversion_rate_percent"] == 14.0
     assert set(payload) == {
         "metric",
+        "suggested_verdict",
         "verdict",
+        "reliable",
         "winner",
         "control",
         "best_treatment",
@@ -64,21 +66,66 @@ def test_payload_holds_only_rounded_computed_numbers() -> None:
         "relative_lift_percent",
         "p_value",
         "significance_threshold",
-        "min_visitors_per_variant",
+        "min_sample_size",
+    }
+    assert set(payload["variants"][0]) == {
+        "name",
+        "users",
+        "conversions",
+        "conversion_rate_percent",
+        "more_users_needed",
     }
 
 
-def test_summary_sends_only_the_payload(
+def test_verdict_line_and_reliability_are_decided_in_code() -> None:
+    winner = summary_payload(winning_result())
+    assert winner["suggested_verdict"] == "Variant green_buy_now is winning"
+    assert winner["reliable"] is True
+
+    control_wins = summary_payload(
+        analyse(
+            make_plan(min_sample_size=300),
+            {
+                "control": VariantCounts(visitors=1000, conversions=150),
+                "green_buy_now": VariantCounts(visitors=1000, conversions=100),
+            },
+        )
+    )
+    assert control_wins["suggested_verdict"] == "Control is better"
+
+
+def test_more_users_needed_is_computed_per_variant() -> None:
+    payload = summary_payload(
+        analyse(
+            make_plan(min_sample_size=500),
+            {
+                "control": VariantCounts(visitors=320, conversions=30),
+                "green_buy_now": VariantCounts(visitors=510, conversions=60),
+            },
+        )
+    )
+
+    assert payload["suggested_verdict"] == "No clear winner yet"
+    assert payload["reliable"] is False
+    assert [v["more_users_needed"] for v in payload["variants"]] == [180, 0]
+    assert payload["min_sample_size"] == 500
+
+
+def test_summary_puts_the_stats_into_the_prompt(
     make_llm: Callable[..., LLMClient], fake_chat: FakeChatClient
 ) -> None:
-    fake_chat.queue("green_buy_now wins.")
+    fake_chat.queue("Variant green_buy_now is winning.")
     result = winning_result()
 
-    assert summarise(result, llm=make_llm()) == "green_buy_now wins."
+    assert summarise(result, llm=make_llm()) == "Variant green_buy_now is winning."
     call = fake_chat.calls[0]
+    system, user = call["messages"][0]["content"], call["messages"][1]["content"]
     assert call["temperature"] == 0.3
-    assert "Never calculate" in call["messages"][0]["content"]
-    assert json.loads(call["messages"][1]["content"]) == summary_payload(result)
+    assert "Never calculate or invent numbers" in system
+    assert "{stats_json}" not in system
+    stats = json.loads(system.split("Stats: ", 1)[1])
+    assert stats == summary_payload(result)
+    assert user == "Write the summary now."
 
 
 # --- Rollout ----------------------------------------------------------------------------
@@ -114,20 +161,21 @@ class ScriptedFlagsmith:
                 ]
             }
         if name == "list_feature_multivariate_options":
-            return {"results": [{"id": 77, "key": "green_buy_now", "string_value": "{}"}]}
+            value = json.dumps({"color": "#16a34a", "label": "Buy now"}, separators=(",", ":"))
+            return {"results": [{"id": 77, "key": None, "string_value": value}]}
         if name == "update_environment_feature_state":
             return {"id": 901}
         raise AssertionError(f"unexpected tool {name}")
 
 
 def live_experiment(audit: AuditLog) -> None:
-    plan = make_plan(min_sample_size=100)
+    plan = make_plan(min_sample_size=300)
     approve(plan, "Asha", audit)
     audit.record("result", flag_name=plan.flag_name, tool="create_feature", result={"id": 55})
 
 
 def run_rollout(audit: AuditLog, flagsmith: ScriptedFlagsmith, approval: Any = "approve") -> Any:
-    rollout = build_rollout(make_plan(min_sample_size=100), winning_result())
+    rollout = build_rollout(make_plan(min_sample_size=300), winning_result())
     if approval == "approve":
         approval = approve_rollout(rollout, "Ben", audit)
     return roll_out_winner(

@@ -31,7 +31,7 @@ def test_two_proportion_p_value_known_value() -> None:
 
 
 def test_clear_winner() -> None:
-    result = analyse(make_plan(min_sample_size=200), counts((1000, 100), (1000, 140)))
+    result = analyse(make_plan(min_sample_size=300), counts((1000, 100), (1000, 140)))
 
     assert result.verdict == "winner"
     assert result.winner == "green_buy_now"
@@ -41,7 +41,7 @@ def test_clear_winner() -> None:
 
 
 def test_not_significant() -> None:
-    result = analyse(make_plan(min_sample_size=200), counts((1000, 100), (1000, 105)))
+    result = analyse(make_plan(min_sample_size=300), counts((1000, 100), (1000, 105)))
 
     assert result.verdict == "not_significant"
     assert result.winner is None
@@ -71,7 +71,7 @@ def test_conversions_cannot_exceed_visitors() -> None:
 
 
 def test_reporter_numbers_match_hand_calculation() -> None:
-    result = analyse(make_plan(min_sample_size=100), counts((1000, 100), (1000, 130)))
+    result = analyse(make_plan(min_sample_size=300), counts((1000, 100), (1000, 130)))
 
     assert result.absolute_lift == pytest.approx(0.03)
     assert result.relative_lift == pytest.approx(0.30)
@@ -84,7 +84,7 @@ def test_reporter_numbers_match_hand_calculation() -> None:
 
 def test_several_treatments_use_bonferroni_correction() -> None:
     plan = make_plan(
-        min_sample_size=100,
+        min_sample_size=300,
         variants=[
             {"name": "control", "value": {"label": "A"}},
             {"name": "b", "value": {"label": "B"}},
@@ -108,14 +108,14 @@ def test_several_treatments_use_bonferroni_correction() -> None:
 
 
 def test_control_can_win() -> None:
-    result = analyse(make_plan(min_sample_size=100), counts((1000, 150), (1000, 100)))
+    result = analyse(make_plan(min_sample_size=300), counts((1000, 150), (1000, 100)))
 
     assert result.verdict == "winner" and result.winner == "control"
     assert result.relative_lift == pytest.approx(-1 / 3)
 
 
 def test_zero_control_rate_has_no_relative_lift() -> None:
-    result = analyse(make_plan(min_sample_size=100), counts((1000, 0), (1000, 20)))
+    result = analyse(make_plan(min_sample_size=300), counts((1000, 0), (1000, 20)))
 
     assert result.relative_lift is None
     assert result.absolute_lift == pytest.approx(0.02)

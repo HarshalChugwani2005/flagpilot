@@ -13,7 +13,7 @@ Flagsmith "Toggle Wars" hackathon · Track 2: AI Agents + Feature Flags
 
 ## What it does
 
-1. **Plan:** you type a request. Llama 3.3 70B (NVIDIA NIM) returns a validated plan: an
+1. **Plan:** you type a request. Nemotron 3.5 Super (NVIDIA NIM) returns a validated plan: an
    `fp_` flag, 2–4 variants, a traffic split, the metric event and the risks. It asks
    clarifying questions instead if the request is too vague.
 2. **Review:** you see the hypothesis, a live preview of each variant, the split, a numbered
@@ -32,7 +32,7 @@ Flagsmith "Toggle Wars" hackathon · Track 2: AI Agents + Feature Flags
 flowchart LR
     U([You]) --> UI[Streamlit UI<br/>ui/app.py + ui/pages/]
     UI --> P[Planner<br/>agent/planner.py]
-    P --> LLM[NVIDIA NIM · Llama 3.3 70B<br/>agent/llm.py]
+    P --> LLM[NVIDIA NIM · Nemotron 3.5 Super<br/>agent/llm.py]
     P --> G[Guardrails<br/>agent/guardrails.py]
     UI --> A[Approval + plan hash<br/>agent/approval.py]
     A --> X[Executor: the only writer<br/>agent/executor.py]
@@ -54,7 +54,7 @@ flowchart LR
 | --- | --- | --- |
 | Read flags, project, organisations | MCP tools `list_project_features`, `get_project`, `list_organizations`, `list_projects_in_organization` | [agent/flagsmith_client.py](agent/flagsmith_client.py) |
 | Create the experiment flag | MCP `create_feature`: multivariate, control as base value, variants as options, created switched off | [agent/changes.py](agent/changes.py), [agent/executor.py](agent/executor.py) |
-| Create the metric and experiment | MCP `create_metric` (`occurrence` of the plan's event) and `create_experiment` (rollout %, per-variant weights); option ids read back with `list_feature_multivariate_options` | [agent/changes.py](agent/changes.py), [agent/executor.py](agent/executor.py) |
+| Create the metric and experiment | Admin API `POST /environments/{key}/experiment-metrics/` (`occurrence` of the plan's event; the MCP tool drops the required `definition`), then MCP `create_experiment` (rollout %, per-variant weights) with option ids matched by value | [agent/changes.py](agent/changes.py), [agent/executor.py](agent/executor.py) |
 | Start the experiment | Admin API `POST /environments/{key}/experiments/{id}/start/` (MCP cannot start experiments) | [agent/admin_api.py](agent/admin_api.py) |
 | Roll out the winner | MCP `list_project_environments`, `list_project_features`, `list_feature_multivariate_options`, `update_environment_feature_state` | [agent/rollout.py](agent/rollout.py), [agent/executor.py](agent/executor.py) |
 | Delete demo flags | Admin API `DELETE /api/v1/projects/{id}/features/{id}/` (the MCP server has no delete tool) | [agent/admin_api.py](agent/admin_api.py), [scripts/reset_demo.py](scripts/reset_demo.py) |
@@ -68,7 +68,8 @@ server with `uvx`), Node.js 20+ (demo-store tests only) and GNU Make
 (on Windows: `winget install ezwinports.make`).
 
 1. **Free NVIDIA API key:** sign in at <https://build.nvidia.com>, open
-   `meta/llama-3.3-70b-instruct` and generate an API key (it starts `nvapi-`).
+   `nvidia/nemotron-3.5-super-vl-120b-a12b` and generate an API key (it starts `nvapi-`).
+   One key works for every Free Endpoint model; set the model with `LLM_MODEL`.
 2. **Free Flagsmith account:** sign up at <https://app.flagsmith.com> and create a project
    with a Development environment. Collect:
    - an **Organisation API key** (Organisation Settings → API Keys) → `FLAGSMITH_ADMIN_API_KEY`;
@@ -157,7 +158,7 @@ The sidebar's **Time saved** metric shows the same comparison live
 ## Tech
 
 Python 3.11 · Streamlit · Plotly · Pydantic v2 · openai SDK → NVIDIA NIM
-(`meta/llama-3.3-70b-instruct`) · official Flagsmith MCP server (MCP Python SDK, stdio) ·
+(`nvidia/nemotron-3.5-super-vl-120b-a12b`) · official Flagsmith MCP server (MCP Python SDK, stdio) ·
 httpx · Flagsmith Python and JS SDKs · scipy · pytest · ruff · GitHub Actions.
 
 ## License

@@ -33,7 +33,7 @@ def test_calls_follow_flagsmiths_experiment_flow() -> None:
     assert [call.tool for call in build_changes(make_plan(), project_id=7)] == [
         "create_feature",
         "list_feature_multivariate_options",
-        "create_metric",
+        "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",
     ]

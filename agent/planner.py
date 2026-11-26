@@ -5,10 +5,16 @@ from pathlib import Path
 
 from agent.errors import FlagPilotError
 from agent.llm import PLANNING_TEMPERATURE, LLMClient, get_llm
-from agent.models import SAFE_ENVIRONMENT, ClarifyingQuestions, ExperimentPlan, PlannerOutput
+from agent.models import (
+    MAX_RISKS,
+    SAFE_ENVIRONMENT,
+    ClarifyingQuestions,
+    ExperimentPlan,
+    PlannerOutput,
+)
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "planner.md"
-FLAGS_PLACEHOLDER = "{{existing_flags}}"
+FLAGS_PLACEHOLDER = "{existing_flags}"
 
 
 class PlanningError(FlagPilotError):
@@ -18,14 +24,14 @@ class PlanningError(FlagPilotError):
 def build_system_prompt(existing_flag_names: Collection[str], path: Path = PROMPT_PATH) -> str:
     """Render ``prompts/planner.md`` with the project's existing flag names.
 
-    The JSON schema itself is appended by :meth:`LLMClient.complete_json`.
+    The ``{schema}`` placeholder is filled in by :meth:`LLMClient.complete_json`.
     """
     try:
         template = path.read_text(encoding="utf-8")
     except OSError as error:
         raise PlanningError(f"The planner prompt is missing ({path}).") from error
     names = sorted(existing_flag_names)
-    flags = "\n".join(f"- {name}" for name in names) if names else "(none yet)"
+    flags = ", ".join(names) if names else "(none yet)"
     return template.replace(FLAGS_PLACEHOLDER, flags)
 
 
@@ -59,4 +65,6 @@ def keep_in_development(plan: ExperimentPlan) -> ExperimentPlan:
         "FlagPilot plans experiments in development; production needs ALLOW_PRODUCTION=1 "
         "and a separate approval."
     )
-    return plan.model_copy(update={"environment": SAFE_ENVIRONMENT, "risks": [*plan.risks, note]})
+    # Keep within the 1-3 risk limit: the environment note always stays.
+    risks = [*plan.risks[: MAX_RISKS - 1], note]
+    return plan.model_copy(update={"environment": SAFE_ENVIRONMENT, "risks": risks})

@@ -174,3 +174,39 @@ def test_progress_bar() -> None:
 
     assert "[##--] 2/4 (50%)" in stream.getvalue()
     assert stream.getvalue().endswith("[####] 4/4 (100%)\n")
+
+
+def test_variant_is_recognised_by_value_when_flagsmith_sends_no_key() -> None:
+    @dataclass(frozen=True)
+    class ValueFlag:
+        value: str
+        variant: None = None
+        experiment: FakeExperiment | None = FakeExperiment(in_experiment=True)
+        is_default: bool = False
+
+    class ValueSDK(FakeSDK):
+        def get_experiment_flag(self, feature_name: str, identifier: str) -> ValueFlag:
+            self.identities.append(identifier)
+            green = len(self.identities) % 2 == 0
+            return ValueFlag(
+                value='{"label": "Go", "color": "#0f0"}' if green else '{"label":"Buy"}'
+            )
+
+    report = SimulationReport(
+        flag_name="fp_test",
+        event="purchase",
+        rates={"control": 0.0, "green": 1.0},
+        names_by_value={'{"label":"Buy"}': "control", '{"color":"#0f0","label":"Go"}': "green"},
+    )
+    simulate(
+        ValueSDK([]),
+        report,
+        visitors=10,
+        rng=random.Random(1),
+        limiter=NoWait(),  # type: ignore[arg-type]
+        on_progress=lambda done: None,
+        run_id="abc123",
+    )
+
+    assert report.tallies["green"].visitors == 5 and report.tallies["green"].purchases == 5
+    assert report.tallies["control"].visitors == 5 and report.tallies["control"].purchases == 0

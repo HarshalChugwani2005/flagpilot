@@ -97,7 +97,10 @@ def test_plan_approve_create_read_back_and_clean_up(
         )
         assert all(outcome.ok for outcome in result.outcomes)
         by_tool = {outcome.tool: outcome.result for outcome in result.outcomes}
-        assert isinstance(by_tool["create_metric"], dict) and "id" in by_tool["create_metric"]
+        assert (
+            isinstance(by_tool["admin_api.create_metric"], dict)
+            and "id" in by_tool["admin_api.create_metric"]
+        )
         assert isinstance(by_tool["create_experiment"], dict)
         assert "id" in by_tool["create_experiment"]
 
@@ -113,9 +116,12 @@ def test_plan_approve_create_read_back_and_clean_up(
                 {"feature_pk": flag_id, "project_pk": str(project_id)},
             )
         )
-        served = {option["key"]: json.loads(option["string_value"]) for option in options}
+        # Flagsmith returns option "key" as null, so compare the stored values.
+        served = [json.loads(option["string_value"]) for option in options]
         for variant in plan.variants[1:]:
-            assert served[variant.name] == variant.value
+            assert variant.value in served
+        started = by_tool["admin_api.start_experiment"]
+        assert isinstance(started, dict) and started.get("status") == "running"
     finally:
         # 5. Clean up, even if an assertion above failed.
         flag_id = flag_id or find_flag_id(client, name)

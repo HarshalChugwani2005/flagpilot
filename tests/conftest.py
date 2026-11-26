@@ -27,8 +27,8 @@ PLAN_DATA: dict[str, Any] = {
     "metric_name": "Purchase conversion",
     "metric_event": "purchase",
     "environment": "development",
-    "min_sample_size": 200,
-    "risks": [],
+    "min_sample_size": 300,
+    "risks": ["Low traffic may delay a clear result."],
 }
 
 
@@ -50,14 +50,19 @@ class FakeRunner:
         if self.error:
             raise self.error
         if name == "create_feature":
+            # Like real Flagsmith: the sent "key" comes back null; values are kept.
             self._options = [
-                {"id": 500 + index, "key": option["key"]}
+                {"id": 500 + index, "key": None, "string_value": option["string_value"]}
                 for index, option in enumerate(arguments.get("multivariate_options", []))
             ]
-            return {"id": 99, "name": arguments.get("name")}
+            return {
+                "id": 99,
+                "name": arguments.get("name"),
+                "multivariate_options": self._options,
+            }
         if name == "list_feature_multivariate_options":
             return {"results": self._options}
-        if name == "create_metric":
+        if name == "admin_api.create_metric":
             return {"id": 31, "name": arguments.get("name")}
         if name == "create_experiment":
             return {"id": 41, "name": arguments.get("name"), "status": "created"}

@@ -34,7 +34,7 @@ def test_approved_plan_runs_and_every_call_is_logged(audit: AuditLog) -> None:
     assert [name for name, _ in runner.calls] == [
         "create_feature",
         "list_feature_multivariate_options",
-        "create_metric",
+        "admin_api.create_metric",
         "create_experiment",
         "admin_api.start_experiment",
     ]
@@ -42,7 +42,7 @@ def test_approved_plan_runs_and_every_call_is_logged(audit: AuditLog) -> None:
     assert events(audit) == ["approved"] + ["call", "result"] * 5
     call_entry, result_entry = audit.entries()[1:3]
     assert call_entry.arguments is not None and call_entry.arguments["name"] == plan.flag_name
-    assert result_entry.result == {"id": 99, "name": plan.flag_name}
+    assert result_entry.result["id"] == 99 and result_entry.result["name"] == plan.flag_name
     assert result_entry.approver == "Asha"
 
 
@@ -264,7 +264,7 @@ def test_references_are_filled_from_earlier_replies(audit: AuditLog) -> None:
 
     sent = dict(runner.calls)
     assert sent["list_feature_multivariate_options"] == {"feature_pk": 99, "project_pk": "7"}
-    metric = sent["create_metric"]
+    metric = sent["admin_api.create_metric"]
     assert metric["definition"] == {"version": 1, "event": "purchase"}
     assert metric["environment_api_key"] == "env-test"
     experiment = sent["create_experiment"]
@@ -300,3 +300,13 @@ def test_real_run_needs_the_admin_api_and_environment_key(audit: AuditLog) -> No
         execute_plan(plan, approve(plan, "Asha", audit), runner=runner, audit=audit, project_id=7)
     assert "FLAGSMITH_ENVIRONMENT_KEY" in error.value.friendly
     assert runner.calls == []
+
+
+def test_options_are_matched_by_value_because_flagsmith_drops_the_key(audit: AuditLog) -> None:
+    runner = FakeRunner()  # answers like Flagsmith: option "key" comes back null
+
+    run_live(make_plan(), audit, runner)
+
+    experiment = dict(runner.calls)["create_experiment"]
+    [allocation] = experiment["experiment_rollout"]["multivariate_feature_state_values"]
+    assert allocation["multivariate_feature_option"] == 500

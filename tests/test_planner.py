@@ -29,7 +29,7 @@ def plan_json(**changes: Any) -> str:
         "metric_name": "Purchase conversion",
         "metric_event": "purchase",
         "environment": "development",
-        "min_sample_size": 200,
+        "min_sample_size": 300,
         "risks": ["Colour change may reduce contrast for some users."],
     }
     plan.update(changes)
@@ -52,11 +52,14 @@ def test_clear_request_returns_plan(
     assert result.split == {"control": 50, "green_buy_now": 50}
     call = fake_chat.calls[0]
     system = call["messages"][0]["content"]
-    assert "- fp_old_banner" in system and "- checkout_button" in system
-    assert "Output ONLY JSON matching this schema" in system
+    assert "Existing flags: checkout_button, fp_old_banner" in system
+    assert "Output ONLY JSON matching this schema: {" in system
+    assert "{schema}" not in system and "{existing_flags}" not in system
+    assert system.count('"clarifying_questions"') >= 2  # the rule text and the schema
+    assert system.count("Output ONLY JSON") == 1  # schema inserted once, not appended
     assert "guided_json" in call["extra_body"]["nvext"]
     assert call["temperature"] == 0.0
-    assert call["max_tokens"] == 1024
+    assert call["max_tokens"] == 4096
 
 
 def test_vague_request_returns_questions(
@@ -161,3 +164,63 @@ def test_blank_request_is_refused_without_calling_llm(
 
 def test_prompt_without_existing_flags() -> None:
     assert "(none yet)" in build_system_prompt([])
+
+
+def test_clarifying_questions_key_from_the_prompt(
+    make_llm: Callable[..., LLMClient], fake_chat: FakeChatClient
+) -> None:
+    fake_chat.queue(json.dumps({"clarifying_questions": ["Which metric?"]}))
+
+    result = plan_experiment("change the checkout", [], llm=make_llm())
+
+    assert isinstance(result, ClarifyingQuestions)
+    assert result.questions == ["Which metric?"]
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        (
+            {
+                "variants": [
+                    {"name": "baseline", "value": {"a": 1}},
+                    {"name": "green_buy_now", "value": {"a": 2}},
+                ],
+                "split": {"baseline": 50, "green_buy_now": 50},
+            },
+            'must be named "control"',
+        ),
+        ({"min_sample_size": 299}, "greater than or equal to 300"),
+        ({"risks": []}, "at least 1 item"),
+        ({"risks": ["a", "b", "c", "d"]}, "at most 3 items"),
+    ],
+)
+def test_prompt_rules_are_enforced(changes: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        ExperimentPlan.model_validate_json(plan_json(**changes))
+
+
+def test_downgrade_note_keeps_risks_within_three(
+    make_llm: Callable[..., LLMClient], fake_chat: FakeChatClient
+) -> None:
+    fake_chat.queue(plan_json(environment="production", risks=["r1", "r2", "r3"]))
+
+    plan = plan_experiment("Run it in production", [], llm=make_llm())
+
+    assert isinstance(plan, ExperimentPlan)
+    assert plan.environment == "development"
+    assert plan.risks[:2] == ["r1", "r2"] and "'production'" in plan.risks[2]
+    ExperimentPlan.model_validate(plan.model_dump())  # still valid after the change
+
+
+def test_variants_need_different_values() -> None:
+    same = {"color": "#16a34a", "label": "Buy now"}
+    with pytest.raises(ValidationError, match="different value"):
+        ExperimentPlan.model_validate_json(
+            plan_json(
+                variants=[
+                    {"name": "control", "value": same},
+                    {"name": "green_buy_now", "value": same},
+                ]
+            )
+        )

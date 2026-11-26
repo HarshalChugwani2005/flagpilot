@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from agent.changes import match_options, option_values
 from agent.errors import FlagPilotError
 from agent.models import ExperimentPlan, ExperimentResult, RolloutPlan
 
@@ -50,6 +51,7 @@ def build_rollout(plan: ExperimentPlan, result: ExperimentResult) -> RolloutPlan
         winner=result.winner,
         stale_variants=[v.name for v in plan.variants if v.name != result.winner],
         environment=plan.environment,
+        values=option_values(plan),
     )
 
 
@@ -109,13 +111,9 @@ def find_feature_state(response: Any, flag_name: str) -> FeatureStateRef:
     raise RolloutError(f'Flag "{flag_name}" was not found in Flagsmith.')
 
 
-def option_ids(response: Any) -> dict[str, int]:
-    """Multivariate option id per variant key."""
-    ids = {}
-    for item in _items(response, "multivariate options"):
-        if isinstance(item.get("key"), str) and isinstance(item.get("id"), int):
-            ids[item["key"]] = item["id"]
-    return ids
+def option_ids(response: Any, values: dict[str, str]) -> dict[str, int]:
+    """Multivariate option id per variant name, matched on the stored option value."""
+    return match_options(_items(response, "multivariate options"), values)
 
 
 def rollout_allocations(rollout: RolloutPlan, ids: dict[str, int]) -> list[dict[str, Any]]:

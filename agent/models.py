@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Discriminator,
@@ -20,6 +21,9 @@ from pydantic import (
 FLAG_NAME_PATTERN = r"^fp_[a-z0-9]+(?:_[a-z0-9]+)*$"
 EVENT_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
 SAFE_ENVIRONMENT = "development"
+CONTROL = "control"
+MIN_SAMPLE_SIZE = 300
+MAX_RISKS = 3
 
 
 class Variant(BaseModel):
@@ -48,8 +52,8 @@ class ExperimentPlan(BaseModel):
     metric_name: str = Field(min_length=1)
     metric_event: str = Field(min_length=1, max_length=64, pattern=EVENT_NAME_PATTERN)
     environment: Literal["development", "production"] = SAFE_ENVIRONMENT
-    min_sample_size: int = Field(ge=1)
-    risks: list[str] = Field(default_factory=list)
+    min_sample_size: int = Field(ge=MIN_SAMPLE_SIZE)
+    risks: list[str] = Field(min_length=1, max_length=MAX_RISKS)
 
     @field_validator("flag_name")
     @classmethod
@@ -71,10 +75,17 @@ class ExperimentPlan(BaseModel):
 
     @model_validator(mode="after")
     def split_matches_variants(self) -> Self:
-        """Variant names are unique, the split covers exactly them, and weights sum to 100."""
+        """Control first, unique variant names, a split covering exactly them, summing to 100."""
         names = [variant.name for variant in self.variants]
+        if names[0] != CONTROL:
+            raise ValueError(
+                f'the first variant is the current behaviour and must be named "{CONTROL}"'
+            )
         if len(set(names)) != len(names):
             raise ValueError("variant names must be unique")
+        values = [json.dumps(variant.value, sort_keys=True) for variant in self.variants]
+        if len(set(values)) != len(values):
+            raise ValueError("every variant needs a different value")
         if set(self.split) != set(names):
             raise ValueError(f"split keys {sorted(self.split)} must match variants {sorted(names)}")
         if any(weight < 0 for weight in self.split.values()):
@@ -88,9 +99,13 @@ class ExperimentPlan(BaseModel):
 class ClarifyingQuestions(BaseModel):
     """Questions the planner asks when the request is too vague to plan safely."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_by_name=True, validate_by_alias=True)
 
-    questions: list[str] = Field(min_length=1, max_length=5)
+    questions: list[str] = Field(
+        min_length=1,
+        max_length=5,
+        validation_alias=AliasChoices("clarifying_questions", "questions"),
+    )
 
     @field_validator("questions")
     @classmethod
@@ -106,7 +121,7 @@ def _planner_output_kind(value: Any) -> str:
     """Pick the union branch so validation errors describe only the intended model."""
     if isinstance(value, ClarifyingQuestions):
         return "questions"
-    if isinstance(value, dict) and "questions" in value:
+    if isinstance(value, dict) and ("clarifying_questions" in value or "questions" in value):
         return "questions"
     return "plan"
 
@@ -251,6 +266,9 @@ class RolloutPlan(BaseModel):
     winner: str = Field(min_length=1)
     stale_variants: list[str] = Field(min_length=1)
     environment: Literal["development", "production"]
+    values: dict[str, str] = Field(
+        description="Stored value of each non-control variant, used to find its option id."
+    )
 
     @model_validator(mode="after")
     def winner_is_not_stale(self) -> Self:

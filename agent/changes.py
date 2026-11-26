@@ -7,7 +7,8 @@ The calls follow Flagsmith's documented experimentation flow:
    so identities outside the experiment see the control. Created switched off (features
    are project-wide, so this keeps every environment, production included, unchanged).
 2. MCP ``list_feature_multivariate_options``: read back the option ids.
-3. MCP ``create_metric``: ``{"aggregation": "occurrence", "direction": "up",
+3. Admin API ``.../experiment-metrics/`` (the MCP ``create_metric`` tool drops the
+   required ``definition``): ``{"aggregation": "occurrence", "direction": "up",
    "definition": {"version": 1, "event": <metric_event>}}``.
 4. MCP ``create_experiment``: rollout ``traffic_percent``; inside it each treatment gets
    its split weight and the control the remainder.
@@ -18,12 +19,13 @@ in by the executor; ``$ref:<name>:str`` passes the value as a string.
 """
 
 import json
+from typing import Any
 
 from agent.models import ExperimentPlan, PlannedCall
 
 CREATE_FEATURE = "create_feature"
 LIST_OPTIONS = "list_feature_multivariate_options"
-CREATE_METRIC = "create_metric"
+CREATE_METRIC = "admin_api.create_metric"
 CREATE_EXPERIMENT = "create_experiment"
 START_EXPERIMENT = "admin_api.start_experiment"
 OUTSIDE = "not in experiment"
@@ -34,6 +36,25 @@ ENVIRONMENT_KEY_REF = f"{REF}environment_api_key"
 def _compact(value: object) -> str:
     """JSON without spaces, as stored in Flagsmith."""
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def option_values(plan: ExperimentPlan) -> dict[str, str]:
+    """Return each non-control variant's stored value (compact JSON), as sent to Flagsmith."""
+    return {variant.name: _compact(variant.value) for variant in plan.variants[1:]}
+
+
+def match_options(options: list[dict[str, Any]], values: dict[str, str]) -> dict[str, int]:
+    """Map variant name -> Flagsmith option id by stored value.
+
+    Flagsmith ignores the ``key`` FlagPilot sends with each option (it comes back null),
+    so options are matched on ``string_value``, which plans keep unique per variant.
+    """
+    ids_by_value = {
+        option["string_value"]: option["id"]
+        for option in options
+        if isinstance(option.get("string_value"), str) and isinstance(option.get("id"), int)
+    }
+    return {name: ids_by_value[value] for name, value in values.items() if value in ids_by_value}
 
 
 def variant_allocations(plan: ExperimentPlan) -> dict[str, float]:
@@ -101,7 +122,9 @@ def _create_experiment(plan: ExperimentPlan) -> PlannedCall:
             "feature": f"{REF}create_feature.id",
             "name": plan.flag_name,
             "hypothesis": plan.hypothesis,
-            "metrics": [{"metric": f"{REF}create_metric.id:str", "expected_direction": "increase"}],
+            "metrics": [
+                {"metric": f"{REF}admin_api.create_metric.id:str", "expected_direction": "increase"}
+            ],
             "experiment_rollout": {
                 "enabled": True,
                 "rollout_percentage": plan.traffic_percent,
