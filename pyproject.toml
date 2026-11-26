@@ -1,19 +1,16 @@
-[project]
-name = "flagpilot"
-version = "0.1.0"
-description = "AI agent that turns plain-English requests into human-approved Flagsmith A/B experiments."
-readme = "README.md"
-requires-python = ">=3.11,<3.12"
-dependencies = [
-    "pydantic>=2.7",
-    "pydantic-settings>=2.3",
-]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.0",
-]
+# Tool configuration only. Dependencies live in requirements.txt.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+ignore = ["D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D103"]
